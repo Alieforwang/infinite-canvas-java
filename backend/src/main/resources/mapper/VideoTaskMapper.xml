@@ -1,0 +1,432 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     视频任务表 SQL（原生 MyBatis，手写便于修改学习）
+     状态机：CREATED/SUBMITTING/SUBMIT_UNKNOWN/QUEUED/RUNNING/DOWNLOADING
+             -> SUCCEEDED / FAILED / CANCELLED / EXPIRED
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.VideoTaskMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.VideoTask">
+        <id column="id" property="id"/>
+        <result column="task_no" property="taskNo"/>
+        <result column="user_id" property="userId"/>
+        <result column="channel_id" property="channelId"/>
+        <result column="model_id" property="modelId"/>
+        <result column="status" property="status"/>
+        <result column="idempotency_key" property="idempotencyKey"/>
+        <result column="request_hash" property="requestHash"/>
+        <result column="prompt" property="prompt"/>
+        <result column="params_json" property="paramsJson"/>
+        <result column="references_json" property="referencesJson"/>
+        <result column="upstream_task_id" property="upstreamTaskId"/>
+        <result column="upstream_status" property="upstreamStatus"/>
+        <result column="upstream_request_id" property="upstreamRequestId"/>
+        <result column="upstream_result_url" property="upstreamResultUrl"/>
+        <result column="result_expires_at" property="resultExpiresAt"/>
+        <result column="progress" property="progress"/>
+        <result column="file_id" property="fileId"/>
+        <result column="held_credits" property="heldCredits"/>
+        <result column="settled_credits" property="settledCredits"/>
+        <result column="error_code" property="errorCode"/>
+        <result column="error_message" property="errorMessage"/>
+        <result column="attempt_count" property="attemptCount"/>
+        <result column="poll_count" property="pollCount"/>
+        <result column="next_poll_at" property="nextPollAt"/>
+        <result column="deadline_at" property="deadlineAt"/>
+        <result column="submitted_at" property="submittedAt"/>
+        <result column="finished_at" property="finishedAt"/>
+        <result column="client_ip" property="clientIp"/>
+        <result column="client_request_id" property="clientRequestId"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, task_no, user_id, channel_id, model_id, status, idempotency_key, request_hash,
+        prompt, params_json, references_json, upstream_task_id, upstream_status, upstream_request_id,
+        upstream_result_url, result_expires_at, progress, file_id, held_credits, settled_credits,
+        error_code, error_message, attempt_count, poll_count, next_poll_at, deadline_at,
+        submitted_at, finished_at, client_ip, client_request_id, created_at, updated_at
+    </sql>
+
+    <!-- 活动状态（与 VideoTaskService.ACTIVE_STATUSES 保持一致） -->
+    <sql id="Active_Status_Values">
+        'CREATED', 'SUBMITTING', 'SUBMIT_UNKNOWN', 'QUEUED', 'RUNNING', 'DOWNLOADING'
+    </sql>
+
+    <!-- 分页/筛选条件：用户端（statuses 可为空，表示不限状态） -->
+    <sql id="User_Page_Where">
+        WHERE user_id = #{userId}
+        AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(params_json, '$.capability')), 'video') = 'video'
+        <if test="statuses != null and statuses.size() > 0">
+            AND status IN
+            <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+        </if>
+    </sql>
+
+    <!-- 分页/筛选条件：管理端（三个条件都可空） -->
+    <sql id="Admin_Page_Where">
+        <where>
+            <if test="statuses != null and statuses.size() > 0">
+                AND status IN
+                <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+            </if>
+            <if test="userId != null">
+                AND user_id = #{userId}
+            </if>
+            <if test="taskNo != null and taskNo != ''">
+                AND task_no LIKE CONCAT('%', #{taskNo}, '%')
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByTaskNo" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE task_no = #{taskNo}
+        LIMIT 1
+    </select>
+
+    <select id="selectByTaskNoAndUser" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE task_no = #{taskNo}
+          AND user_id = #{userId}
+        LIMIT 1
+    </select>
+
+    <select id="selectByUserAndIdempotencyKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE user_id = #{userId}
+          AND idempotency_key = #{idempotencyKey}
+        LIMIT 1
+    </select>
+
+    <!-- 插入：null 字段不写列，交给数据库默认值（与 MyBatis-Plus insert 行为一致） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO video_task
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="taskNo != null">task_no,</if>
+            <if test="userId != null">user_id,</if>
+            <if test="channelId != null">channel_id,</if>
+            <if test="modelId != null">model_id,</if>
+            <if test="status != null">status,</if>
+            <if test="idempotencyKey != null">idempotency_key,</if>
+            <if test="requestHash != null">request_hash,</if>
+            <if test="prompt != null">prompt,</if>
+            <if test="paramsJson != null">params_json,</if>
+            <if test="referencesJson != null">references_json,</if>
+            <if test="upstreamTaskId != null">upstream_task_id,</if>
+            <if test="upstreamStatus != null">upstream_status,</if>
+            <if test="upstreamRequestId != null">upstream_request_id,</if>
+            <if test="upstreamResultUrl != null">upstream_result_url,</if>
+            <if test="resultExpiresAt != null">result_expires_at,</if>
+            <if test="progress != null">progress,</if>
+            <if test="fileId != null">file_id,</if>
+            <if test="heldCredits != null">held_credits,</if>
+            <if test="settledCredits != null">settled_credits,</if>
+            <if test="errorCode != null">error_code,</if>
+            <if test="errorMessage != null">error_message,</if>
+            <if test="attemptCount != null">attempt_count,</if>
+            <if test="pollCount != null">poll_count,</if>
+            <if test="nextPollAt != null">next_poll_at,</if>
+            <if test="deadlineAt != null">deadline_at,</if>
+            <if test="submittedAt != null">submitted_at,</if>
+            <if test="finishedAt != null">finished_at,</if>
+            <if test="clientIp != null">client_ip,</if>
+            <if test="clientRequestId != null">client_request_id,</if>
+            <if test="createdAt != null">created_at,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="taskNo != null">#{taskNo},</if>
+            <if test="userId != null">#{userId},</if>
+            <if test="channelId != null">#{channelId},</if>
+            <if test="modelId != null">#{modelId},</if>
+            <if test="status != null">#{status},</if>
+            <if test="idempotencyKey != null">#{idempotencyKey},</if>
+            <if test="requestHash != null">#{requestHash},</if>
+            <if test="prompt != null">#{prompt},</if>
+            <if test="paramsJson != null">#{paramsJson},</if>
+            <if test="referencesJson != null">#{referencesJson},</if>
+            <if test="upstreamTaskId != null">#{upstreamTaskId},</if>
+            <if test="upstreamStatus != null">#{upstreamStatus},</if>
+            <if test="upstreamRequestId != null">#{upstreamRequestId},</if>
+            <if test="upstreamResultUrl != null">#{upstreamResultUrl},</if>
+            <if test="resultExpiresAt != null">#{resultExpiresAt},</if>
+            <if test="progress != null">#{progress},</if>
+            <if test="fileId != null">#{fileId},</if>
+            <if test="heldCredits != null">#{heldCredits},</if>
+            <if test="settledCredits != null">#{settledCredits},</if>
+            <if test="errorCode != null">#{errorCode},</if>
+            <if test="errorMessage != null">#{errorMessage},</if>
+            <if test="attemptCount != null">#{attemptCount},</if>
+            <if test="pollCount != null">#{pollCount},</if>
+            <if test="nextPollAt != null">#{nextPollAt},</if>
+            <if test="deadlineAt != null">#{deadlineAt},</if>
+            <if test="submittedAt != null">#{submittedAt},</if>
+            <if test="finishedAt != null">#{finishedAt},</if>
+            <if test="clientIp != null">#{clientIp},</if>
+            <if test="clientRequestId != null">#{clientRequestId},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateById">
+        UPDATE video_task
+        <set>
+            <if test="taskNo != null">task_no = #{taskNo},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="channelId != null">channel_id = #{channelId},</if>
+            <if test="modelId != null">model_id = #{modelId},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="idempotencyKey != null">idempotency_key = #{idempotencyKey},</if>
+            <if test="requestHash != null">request_hash = #{requestHash},</if>
+            <if test="prompt != null">prompt = #{prompt},</if>
+            <if test="paramsJson != null">params_json = #{paramsJson},</if>
+            <if test="referencesJson != null">references_json = #{referencesJson},</if>
+            <if test="upstreamTaskId != null">upstream_task_id = #{upstreamTaskId},</if>
+            <if test="upstreamStatus != null">upstream_status = #{upstreamStatus},</if>
+            <if test="upstreamRequestId != null">upstream_request_id = #{upstreamRequestId},</if>
+            <if test="upstreamResultUrl != null">upstream_result_url = #{upstreamResultUrl},</if>
+            <if test="resultExpiresAt != null">result_expires_at = #{resultExpiresAt},</if>
+            <if test="progress != null">progress = #{progress},</if>
+            <if test="fileId != null">file_id = #{fileId},</if>
+            <if test="heldCredits != null">held_credits = #{heldCredits},</if>
+            <if test="settledCredits != null">settled_credits = #{settledCredits},</if>
+            <if test="errorCode != null">error_code = #{errorCode},</if>
+            <if test="errorMessage != null">error_message = #{errorMessage},</if>
+            <if test="attemptCount != null">attempt_count = #{attemptCount},</if>
+            <if test="pollCount != null">poll_count = #{pollCount},</if>
+            <if test="nextPollAt != null">next_poll_at = #{nextPollAt},</if>
+            <if test="deadlineAt != null">deadline_at = #{deadlineAt},</if>
+            <if test="submittedAt != null">submitted_at = #{submittedAt},</if>
+            <if test="finishedAt != null">finished_at = #{finishedAt},</if>
+            <if test="clientIp != null">client_ip = #{clientIp},</if>
+            <if test="clientRequestId != null">client_request_id = #{clientRequestId},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM video_task WHERE id = #{id}
+    </delete>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM video_task
+    </select>
+
+    <!-- 进行中任务数（活动状态，供后台概览「运行中」使用） -->
+    <select id="countRunning" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE status IN (<include refid="Active_Status_Values"/>)
+    </select>
+
+    <select id="countCreatedToday" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE created_at &gt;= UTC_DATE()
+    </select>
+
+    <!-- 与旧实现保持一致：按「创建时间」统计今日终态任务 -->
+    <select id="countFinishedToday" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE created_at &gt;= UTC_DATE()
+          AND status IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED')
+    </select>
+
+    <select id="countSucceededToday" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE created_at &gt;= UTC_DATE()
+          AND status = 'SUCCEEDED'
+    </select>
+
+    <select id="countFailedToday" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE created_at &gt;= #{since}
+          AND status IN ('FAILED', 'EXPIRED')
+    </select>
+
+    <!-- 今日已结算消耗积分（与旧实现一致：按创建时间） -->
+    <select id="creditsConsumedToday" resultType="long">
+        SELECT COALESCE(SUM(settled_credits), 0) FROM video_task
+        WHERE created_at &gt;= UTC_DATE()
+          AND status = 'SUCCEEDED'
+    </select>
+
+    <select id="countActiveByUser" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE user_id = #{userId}
+          AND status IN (<include refid="Active_Status_Values"/>)
+    </select>
+
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE user_id = #{userId}
+    </select>
+
+    <!-- 最近 7 天趋势：按 UTC 日期分组，返回 d/tasks/credits 三个键（d 为 MM-dd，与旧实现/前端一致） -->
+    <select id="trend7d" resultType="map">
+        SELECT DATE_FORMAT(created_at, '%m-%d') AS d,
+               COUNT(*) AS tasks,
+               COALESCE(SUM(settled_credits), 0) AS credits
+        FROM video_task
+        WHERE created_at &gt;= DATE_SUB(UTC_DATE(), INTERVAL 6 DAY)
+        GROUP BY DATE_FORMAT(created_at, '%m-%d')
+        ORDER BY d ASC
+    </select>
+
+    <select id="countUserPage" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        <include refid="User_Page_Where"/>
+    </select>
+
+    <select id="selectUserPage" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        <include refid="User_Page_Where"/>
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countAdminPage" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        <include refid="Admin_Page_Where"/>
+    </select>
+
+    <select id="selectAdminPage" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        <include refid="Admin_Page_Where"/>
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 轮询器相关 SQL（due 查询 / 租约 / 状态机流转） -->
+
+    <select id="selectExpiredImages" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE status = 'RUNNING'
+          AND JSON_UNQUOTE(JSON_EXTRACT(params_json, '$.capability')) = 'image'
+          AND deadline_at &lt;= #{now}
+        ORDER BY deadline_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectDue" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task
+        WHERE status IN
+        <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+        AND next_poll_at &lt;= #{now}
+        AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(params_json, '$.capability')), 'video') = 'video'
+        ORDER BY next_poll_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 抢占轮询租约：仅当任务仍活动且确实到期时生效 -->
+    <update id="lease">
+        UPDATE video_task
+        SET next_poll_at = #{nextPollAt},
+            poll_count = poll_count + 1
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+          AND next_poll_at &lt;= #{now}
+    </update>
+
+    <!-- 提交成功：记录上游任务 ID -->
+    <update id="markQueued">
+        UPDATE video_task
+        SET status = 'QUEUED',
+            upstream_task_id = #{upstreamTaskId},
+            upstream_status = #{upstreamStatus},
+            submitted_at = #{submittedAt},
+            next_poll_at = #{nextPollAt}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 上游生成中 -->
+    <update id="markRunning">
+        UPDATE video_task
+        SET status = 'RUNNING',
+            upstream_status = #{upstreamStatus},
+            progress = #{progress},
+            next_poll_at = #{nextPollAt}
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+    </update>
+
+    <!-- 上游完成，进入下载阶段 -->
+    <update id="markDownloading">
+        UPDATE video_task
+        SET status = 'DOWNLOADING',
+            upstream_status = #{upstreamStatus},
+            progress = #{progress},
+            next_poll_at = #{nextPollAt}
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+    </update>
+
+    <!-- 取消：仅活动状态可改；clearNextPoll=true 时同时清空下次轮询时间 -->
+    <update id="cancelActive">
+        UPDATE video_task
+        SET status = 'CANCELLED',
+            finished_at = #{finishedAt}
+            <if test="clearNextPoll">, next_poll_at = NULL</if>
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+    </update>
+
+    <!-- 成功结算：settled_credits = held_credits，清空下次轮询时间 -->
+    <update id="finalizeSuccess">
+        UPDATE video_task
+        SET status = 'SUCCEEDED',
+            file_id = #{fileId},
+            progress = 100,
+            settled_credits = held_credits,
+            finished_at = #{finishedAt},
+            next_poll_at = NULL
+        WHERE id = #{id}
+          AND status IN ('DOWNLOADING', 'RUNNING', 'QUEUED')
+    </update>
+
+    <!-- 失败/过期：写入错误信息并清空下次轮询时间 -->
+    <update id="failActive">
+        UPDATE video_task
+        SET status = #{status},
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            finished_at = #{finishedAt},
+            next_poll_at = NULL
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+    </update>
+
+    <!-- 重新排队：只改状态和下次轮询时间 -->
+    <update id="schedule">
+        UPDATE video_task
+        SET status = #{status},
+            next_poll_at = #{nextPollAt}
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+    </update>
+
+</mapper>

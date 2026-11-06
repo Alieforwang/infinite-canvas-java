@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     用户表 SQL（原生 MyBatis）
+     说明：这是手写 SQL 的参考模板，其他 Mapper XML 保持一致风格。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.UserMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.User">
+        <id column="id" property="id"/>
+        <result column="email" property="email"/>
+        <result column="password_hash" property="passwordHash"/>
+        <result column="display_name" property="displayName"/>
+        <result column="status" property="status"/>
+        <result column="role" property="role"/>
+        <result column="last_login_at" property="lastLoginAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, email, password_hash, display_name, status, role, last_login_at, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `user`
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByEmail" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `user`
+        WHERE email = #{email}
+        LIMIT 1
+    </select>
+
+    <!-- 插入：只写非 null 字段，created_at/updated_at 等交给数据库默认值 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `user`
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="email != null">email,</if>
+            <if test="passwordHash != null">password_hash,</if>
+            <if test="displayName != null">display_name,</if>
+            <if test="status != null">status,</if>
+            <if test="role != null">role,</if>
+            <if test="lastLoginAt != null">last_login_at,</if>
+            <if test="createdAt != null">created_at,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="email != null">#{email},</if>
+            <if test="passwordHash != null">#{passwordHash},</if>
+            <if test="displayName != null">#{displayName},</if>
+            <if test="status != null">#{status},</if>
+            <if test="role != null">#{role},</if>
+            <if test="lastLoginAt != null">#{lastLoginAt},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <!-- 只更新非 null 字段 -->
+    <update id="updateById">
+        UPDATE `user`
+        <set>
+            <if test="email != null">email = #{email},</if>
+            <if test="passwordHash != null">password_hash = #{passwordHash},</if>
+            <if test="displayName != null">display_name = #{displayName},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="role != null">role = #{role},</if>
+            <if test="lastLoginAt != null">last_login_at = #{lastLoginAt},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM `user`
+    </select>
+
+    <select id="countCreatedToday" resultType="long">
+        SELECT COUNT(*) FROM `user` WHERE created_at &gt;= UTC_DATE()
+    </select>
+
+    <sql id="Page_Where">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (email LIKE CONCAT('%', #{keyword}, '%') OR display_name LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+        </where>
+    </sql>
+
+    <select id="countByKeywordAndStatus" resultType="long">
+        SELECT COUNT(*) FROM `user`
+        <include refid="Page_Where"/>
+    </select>
+
+    <select id="selectPage" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `user`
+        <include refid="Page_Where"/>
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+</mapper>

@@ -1,0 +1,90 @@
+spring:
+  application:
+    name: canvas-studio-server
+  profiles:
+    active: ${APP_ENV:dev}
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/infinite_canvas_studio?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:infinite_canvas_studio}
+    password: ${DB_PASSWORD:123456}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 10000
+      connection-init-sql: "SET time_zone = '+00:00'"
+  autoconfigure:
+    # 关闭 Boot 的 Flyway 自动配置：改为 config/FlywayConfig.java 里显式装配，
+    # 以便固定使用仍支持 MySQL 5.7 的 Flyway 8.5.13 社区版。
+    exclude: org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 220MB
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 200
+    max-swallow-size: -1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# ------------------------------------------------------------
+# 原生 MyBatis 配置（已移除 MyBatis-Plus）
+# SQL 全部写在 resources/mapper/*.xml；下划线字段会自动映射到驼峰属性
+# ------------------------------------------------------------
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+springdoc:
+  api-docs:
+    enabled: true
+
+app:
+  jwt:
+    issuer: infinite-canvas
+    secret: ${JWT_SECRET:dev-jwt-secret-change-me-0123456789abcdef0123456789abcdef}
+    access-ttl-minutes: 120
+    refresh-ttl-days: 30
+  crypto:
+    key-enc-secret: ${KEY_ENC_SECRET:ZGV2LWtleS1lbmMtc2VjcmV0LTAxMjM0NTY3ODlhYmNkZWY=}
+    download-token-secret: ${DOWNLOAD_TOKEN_SECRET:dev-download-secret-change-me-0123456789abcdef0123456789abcdef}
+  storage:
+    root: ${STORAGE_ROOT:./storage}
+    provider: local
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001}
+  security:
+    allow-private-upstream: ${ALLOW_PRIVATE_UPSTREAM:true}
+    allow-http-upstream: ${ALLOW_HTTP_UPSTREAM:true}
+  poller:
+    enabled: true
+    interval-ms: 1000
+    batch-size: 20
+    lease-seconds: 60
+    timeout-minutes: 30
+  upstream:
+    connect-timeout-ms: 5000
+    query-timeout-ms: 20000
+    create-timeout-ms: 90000
+    download-timeout-ms: 900000
+  admin:
+    init-username: ${ADMIN_INIT_USERNAME:admin}
+    init-password: ${ADMIN_INIT_PASSWORD:Admin@123456}
+
+logging:
+  level:
+    root: INFO
+    com.infinitecanvas: DEBUG
+

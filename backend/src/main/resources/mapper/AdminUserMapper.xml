@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 管理员表 SQL（原生 MyBatis，手写便于修改学习） -->
+<mapper namespace="com.infinitecanvas.mapper.AdminUserMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.AdminUser">
+        <id column="id" property="id"/>
+        <result column="username" property="username"/>
+        <result column="password_hash" property="passwordHash"/>
+        <result column="display_name" property="displayName"/>
+        <result column="role" property="role"/>
+        <result column="status" property="status"/>
+        <result column="last_login_at" property="lastLoginAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, username, password_hash, display_name, role, status, last_login_at, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM admin_user
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByUsername" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM admin_user
+        WHERE username = #{username}
+        LIMIT 1
+    </select>
+
+    <!-- 插入：只写非 null 字段，created_at/updated_at 等交给数据库默认值 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO admin_user
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="username != null">username,</if>
+            <if test="passwordHash != null">password_hash,</if>
+            <if test="displayName != null">display_name,</if>
+            <if test="role != null">role,</if>
+            <if test="status != null">status,</if>
+            <if test="lastLoginAt != null">last_login_at,</if>
+            <if test="createdAt != null">created_at,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="username != null">#{username},</if>
+            <if test="passwordHash != null">#{passwordHash},</if>
+            <if test="displayName != null">#{displayName},</if>
+            <if test="role != null">#{role},</if>
+            <if test="status != null">#{status},</if>
+            <if test="lastLoginAt != null">#{lastLoginAt},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <update id="updateById">
+        UPDATE admin_user
+        <set>
+            <if test="username != null">username = #{username},</if>
+            <if test="passwordHash != null">password_hash = #{passwordHash},</if>
+            <if test="displayName != null">display_name = #{displayName},</if>
+            <if test="role != null">role = #{role},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="lastLoginAt != null">last_login_at = #{lastLoginAt},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM admin_user
+    </select>
+
+</mapper>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     上游调用日志表 SQL（原生 MyBatis，手写便于修改学习）
+     记录每次访问上游渠道的请求/响应摘要
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.UpstreamCallLogMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.UpstreamCallLog">
+        <id column="id" property="id"/>
+        <result column="task_id" property="taskId"/>
+        <result column="task_no" property="taskNo"/>
+        <result column="action" property="action"/>
+        <result column="attempt" property="attempt"/>
+        <result column="http_status" property="httpStatus"/>
+        <result column="latency_ms" property="latencyMs"/>
+        <result column="upstream_request_id" property="upstreamRequestId"/>
+        <result column="error_code" property="errorCode"/>
+        <result column="response_snippet" property="responseSnippet"/>
+        <result column="response_headers" property="responseHeaders"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, task_id, task_no, action, attempt, http_status, latency_ms, upstream_request_id,
+        error_code, response_snippet, response_headers, created_at
+    </sql>
+
+    <!-- 插入：null 字段不写列，交给数据库默认值 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO upstream_call_log
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="taskId != null">task_id,</if>
+            <if test="taskNo != null">task_no,</if>
+            <if test="action != null">action,</if>
+            <if test="attempt != null">attempt,</if>
+            <if test="httpStatus != null">http_status,</if>
+            <if test="latencyMs != null">latency_ms,</if>
+            <if test="upstreamRequestId != null">upstream_request_id,</if>
+            <if test="errorCode != null">error_code,</if>
+            <if test="responseSnippet != null">response_snippet,</if>
+            <if test="responseHeaders != null">response_headers,</if>
+            <if test="createdAt != null">created_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="taskId != null">#{taskId},</if>
+            <if test="taskNo != null">#{taskNo},</if>
+            <if test="action != null">#{action},</if>
+            <if test="attempt != null">#{attempt},</if>
+            <if test="httpStatus != null">#{httpStatus},</if>
+            <if test="latencyMs != null">#{latencyMs},</if>
+            <if test="upstreamRequestId != null">#{upstreamRequestId},</if>
+            <if test="errorCode != null">#{errorCode},</if>
+            <if test="responseSnippet != null">#{responseSnippet},</if>
+            <if test="responseHeaders != null">#{responseHeaders},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+        </trim>
+    </insert>
+
+    <!-- 任务详情页：按 id 倒序取最近 limit 条 -->
+    <select id="selectLatestByTaskId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM upstream_call_log
+        WHERE task_id = #{taskId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

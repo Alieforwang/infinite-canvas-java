@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     视频模型表 SQL（原生 MyBatis，手写便于修改学习）
+     注意：表名 model 是 MySQL 保留字，必须用反引号 `model`
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.VideoModelMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.VideoModel">
+        <id column="id" property="id"/>
+        <result column="channel_id" property="channelId"/>
+        <result column="model_key" property="modelKey"/>
+        <result column="route_weight" property="routeWeight"/>
+        <result column="upstream_model" property="upstreamModel"/>
+        <result column="display_name" property="displayName"/>
+        <result column="capability" property="capability"/>
+        <result column="enabled" property="enabled"/>
+        <result column="sort" property="sort"/>
+        <result column="credits_per_second" property="creditsPerSecond"/>
+        <result column="pricing_rules" property="pricingRules"/>
+        <result column="resolution_factors" property="resolutionFactors"/>
+        <result column="resolution_default" property="resolutionDefault"/>
+        <result column="audio_factor" property="audioFactor"/>
+        <result column="min_charge_credits" property="minChargeCredits"/>
+        <result column="supported_seconds" property="supportedSeconds"/>
+        <result column="supported_sizes" property="supportedSizes"/>
+        <result column="supported_ratios" property="supportedRatios"/>
+        <result column="supports_audio" property="supportsAudio"/>
+        <result column="supports_watermark" property="supportsWatermark"/>
+        <result column="supports_first_last_frame" property="supportsFirstLastFrame"/>
+        <result column="supports_reference_images" property="supportsReferenceImages"/>
+        <result column="max_reference_images" property="maxReferenceImages"/>
+        <result column="extra_request_params" property="extraRequestParams"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, channel_id, model_key, route_weight, upstream_model, display_name, capability, enabled, sort, credits_per_second,
+        pricing_rules, resolution_factors, resolution_default, audio_factor, min_charge_credits, supported_seconds,
+        supported_sizes, supported_ratios, supports_audio, supports_watermark, supports_first_last_frame,
+        supports_reference_images, max_reference_images, extra_request_params, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 用户端可见模型：enabled=1 且 capability='video'，按 sort,id 升序 -->
+    <select id="selectEnabledVideoSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        WHERE enabled = 1
+          AND capability = 'video'
+        ORDER BY sort ASC, id ASC
+    </select>
+
+    <select id="selectEnabledByCapabilitySorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        WHERE enabled = 1
+          AND capability = #{capability}
+        ORDER BY sort ASC, id ASC
+    </select>
+
+    <select id="selectCanonicalByModelKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        WHERE model_key = #{modelKey}
+          AND capability = #{capability}
+        ORDER BY id ASC
+        LIMIT 1
+    </select>
+
+    <select id="selectEnabledByModelKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        WHERE enabled = 1
+          AND model_key = #{modelKey}
+          AND capability = #{capability}
+        ORDER BY sort ASC, id ASC
+    </select>
+
+    <select id="selectAllSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `model`
+        ORDER BY id ASC
+    </select>
+
+    <select id="countByChannelId" resultType="long">
+        SELECT COUNT(*) FROM `model` WHERE channel_id = #{channelId}
+    </select>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM `model`
+    </select>
+
+    <!-- 插入：null 字段不写列，交给数据库默认值（与 MyBatis-Plus insert 行为一致） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `model`
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="channelId != null">channel_id,</if>
+            <if test="modelKey != null">model_key,</if>
+            <if test="routeWeight != null">route_weight,</if>
+            <if test="upstreamModel != null">upstream_model,</if>
+            <if test="displayName != null">display_name,</if>
+            <if test="capability != null">capability,</if>
+            <if test="enabled != null">enabled,</if>
+            <if test="sort != null">sort,</if>
+            <if test="creditsPerSecond != null">credits_per_second,</if>
+            <if test="pricingRules != null">pricing_rules,</if>
+            <if test="resolutionFactors != null">resolution_factors,</if>
+            <if test="resolutionDefault != null">resolution_default,</if>
+            <if test="audioFactor != null">audio_factor,</if>
+            <if test="minChargeCredits != null">min_charge_credits,</if>
+            <if test="supportedSeconds != null">supported_seconds,</if>
+            <if test="supportedSizes != null">supported_sizes,</if>
+            <if test="supportedRatios != null">supported_ratios,</if>
+            <if test="supportsAudio != null">supports_audio,</if>
+            <if test="supportsWatermark != null">supports_watermark,</if>
+            <if test="supportsFirstLastFrame != null">supports_first_last_frame,</if>
+            <if test="supportsReferenceImages != null">supports_reference_images,</if>
+            <if test="maxReferenceImages != null">max_reference_images,</if>
+            <if test="extraRequestParams != null">extra_request_params,</if>
+            <if test="createdAt != null">created_at,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="channelId != null">#{channelId},</if>
+            <if test="modelKey != null">#{modelKey},</if>
+            <if test="routeWeight != null">#{routeWeight},</if>
+            <if test="upstreamModel != null">#{upstreamModel},</if>
+            <if test="displayName != null">#{displayName},</if>
+            <if test="capability != null">#{capability},</if>
+            <if test="enabled != null">#{enabled},</if>
+            <if test="sort != null">#{sort},</if>
+            <if test="creditsPerSecond != null">#{creditsPerSecond},</if>
+            <if test="pricingRules != null">#{pricingRules},</if>
+            <if test="resolutionFactors != null">#{resolutionFactors},</if>
+            <if test="resolutionDefault != null">#{resolutionDefault},</if>
+            <if test="audioFactor != null">#{audioFactor},</if>
+            <if test="minChargeCredits != null">#{minChargeCredits},</if>
+            <if test="supportedSeconds != null">#{supportedSeconds},</if>
+            <if test="supportedSizes != null">#{supportedSizes},</if>
+            <if test="supportedRatios != null">#{supportedRatios},</if>
+            <if test="supportsAudio != null">#{supportsAudio},</if>
+            <if test="supportsWatermark != null">#{supportsWatermark},</if>
+            <if test="supportsFirstLastFrame != null">#{supportsFirstLastFrame},</if>
+            <if test="supportsReferenceImages != null">#{supportsReferenceImages},</if>
+            <if test="maxReferenceImages != null">#{maxReferenceImages},</if>
+            <if test="extraRequestParams != null">#{extraRequestParams},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateById">
+        UPDATE `model`
+        <set>
+            <if test="channelId != null">channel_id = #{channelId},</if>
+            <if test="modelKey != null">model_key = #{modelKey},</if>
+            <if test="routeWeight != null">route_weight = #{routeWeight},</if>
+            <if test="upstreamModel != null">upstream_model = #{upstreamModel},</if>
+            <if test="displayName != null">display_name = #{displayName},</if>
+            <if test="capability != null">capability = #{capability},</if>
+            <if test="enabled != null">enabled = #{enabled},</if>
+            <if test="sort != null">sort = #{sort},</if>
+            <if test="creditsPerSecond != null">credits_per_second = #{creditsPerSecond},</if>
+            <if test="pricingRules != null">pricing_rules = #{pricingRules},</if>
+            <if test="resolutionFactors != null">resolution_factors = #{resolutionFactors},</if>
+            <if test="resolutionDefault != null">resolution_default = #{resolutionDefault},</if>
+            <if test="audioFactor != null">audio_factor = #{audioFactor},</if>
+            <if test="minChargeCredits != null">min_charge_credits = #{minChargeCredits},</if>
+            <if test="supportedSeconds != null">supported_seconds = #{supportedSeconds},</if>
+            <if test="supportedSizes != null">supported_sizes = #{supportedSizes},</if>
+            <if test="supportedRatios != null">supported_ratios = #{supportedRatios},</if>
+            <if test="supportsAudio != null">supports_audio = #{supportsAudio},</if>
+            <if test="supportsWatermark != null">supports_watermark = #{supportsWatermark},</if>
+            <if test="supportsFirstLastFrame != null">supports_first_last_frame = #{supportsFirstLastFrame},</if>
+            <if test="supportsReferenceImages != null">supports_reference_images = #{supportsReferenceImages},</if>
+            <if test="maxReferenceImages != null">max_reference_images = #{maxReferenceImages},</if>
+            <if test="extraRequestParams != null">extra_request_params = #{extraRequestParams},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+</mapper>

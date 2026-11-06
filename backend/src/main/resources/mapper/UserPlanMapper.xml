@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     用户套餐表 user_plan 手写 SQL（原生 MyBatis）
+     status：ACTIVE / EXPIRED / ...
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.UserPlanMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.UserPlan">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="plan_id" property="planId"/>
+        <result column="order_id" property="orderId"/>
+        <result column="credits_total" property="creditsTotal"/>
+        <result column="credits_used" property="creditsUsed"/>
+        <result column="started_at" property="startedAt"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, user_id, plan_id, order_id, credits_total, credits_used, started_at, expires_at, status, created_at
+    </sql>
+
+    <!-- started_at/created_at 未显式传入时交给数据库默认值 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `user_plan` (user_id, plan_id, order_id, credits_total, credits_used,
+                                 started_at, expires_at, status, created_at)
+        VALUES (#{userId}, #{planId}, #{orderId}, #{creditsTotal}, #{creditsUsed},
+                IFNULL(#{startedAt}, CURRENT_TIMESTAMP(3)), #{expiresAt}, #{status},
+                IFNULL(#{createdAt}, CURRENT_TIMESTAMP(3)))
+    </insert>
+
+    <!-- 当前生效套餐：user_id + status=ACTIVE，按 id 倒序取 1 条 -->
+    <select id="selectActiveLatest" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `user_plan`
+        WHERE user_id = #{userId}
+          AND status = 'ACTIVE'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 用户全部套餐记录，最新的在前 -->
+    <select id="selectByUser" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `user_plan`
+        WHERE user_id = #{userId}
+        ORDER BY id DESC
+    </select>
+
+</mapper>

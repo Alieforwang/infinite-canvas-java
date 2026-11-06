@@ -1,0 +1,42 @@
+# ---- build / runtime ----
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# ---- local dev data ----
+.mysql/
+storage/
+logs/
+*.log
+
+# ---- frontend ----
+node_modules/
+dist/
+.vite/
+bun.lock
+package-lock.json
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+
+# ---- local maven repo (workspace) ----
+.m2repo/
+
+
+smoke-output.mp4
+
+
+# ---- local probe/temp ----
+.tmp/
+
+# ---- local tooling / agent caches ----
+.chrome-profile/
+.codegraph/
+.build-temp/
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+

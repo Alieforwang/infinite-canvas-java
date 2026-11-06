@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 系统设置表 SQL（原生 MyBatis，手写便于修改学习）。主键是 setting_key -->
+<mapper namespace="com.infinitecanvas.mapper.SystemSettingMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.SystemSetting">
+        <id column="setting_key" property="settingKey"/>
+        <result column="setting_value" property="settingValue"/>
+        <result column="value_type" property="valueType"/>
+        <result column="description" property="description"/>
+        <result column="updated_by_admin_id" property="updatedByAdminId"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        setting_key, setting_value, value_type, description, updated_by_admin_id, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM system_setting
+        WHERE setting_key = #{settingKey}
+    </select>
+
+    <select id="selectAllSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM system_setting
+        ORDER BY setting_key
+    </select>
+
+    <!-- 插入：只写非 null 字段，description/value_type 等交给数据库默认值 -->
+    <insert id="insert">
+        INSERT INTO system_setting
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="settingKey != null">setting_key,</if>
+            <if test="settingValue != null">setting_value,</if>
+            <if test="valueType != null">value_type,</if>
+            <if test="description != null">description,</if>
+            <if test="updatedByAdminId != null">updated_by_admin_id,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="settingKey != null">#{settingKey},</if>
+            <if test="settingValue != null">#{settingValue},</if>
+            <if test="valueType != null">#{valueType},</if>
+            <if test="description != null">#{description},</if>
+            <if test="updatedByAdminId != null">#{updatedByAdminId},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <update id="updateById">
+        UPDATE system_setting
+        <set>
+            <if test="settingValue != null">setting_value = #{settingValue},</if>
+            <if test="valueType != null">value_type = #{valueType},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="updatedByAdminId != null">updated_by_admin_id = #{updatedByAdminId},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE setting_key = #{settingKey}
+    </update>
+
+</mapper>

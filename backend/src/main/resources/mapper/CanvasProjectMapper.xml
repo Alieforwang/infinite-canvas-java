@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     画布项目表 canvas_project 手写 SQL（原生 MyBatis）
+     乐观锁：updateWithVersion 以 version 作为条件并自增；软删：softDelete 只写 deleted_at。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.CanvasProjectMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.CanvasProject">
+        <id column="id" property="id"/>
+        <result column="project_no" property="projectNo"/>
+        <result column="user_id" property="userId"/>
+        <result column="title" property="title"/>
+        <result column="document_json" property="documentJson"/>
+        <result column="node_count" property="nodeCount"/>
+        <result column="file_count" property="fileCount"/>
+        <result column="document_bytes" property="documentBytes"/>
+        <result column="version" property="version"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="deleted_at" property="deletedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, project_no, user_id, title, document_json, node_count, file_count, document_bytes, version,
+        created_at, updated_at, deleted_at
+    </sql>
+
+    <!-- 按主键查询：不判断软删除（语义同原 selectById） -->
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `canvas_project`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 按 project_no + user_id 查询：排除已删除 -->
+    <select id="selectByProjectNoAndUserNotDeleted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `canvas_project`
+        WHERE project_no = #{projectNo}
+          AND user_id = #{userId}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <!-- 用户画布列表：最近更新优先，最多 limit 条 -->
+    <select id="selectByUserNotDeleted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `canvas_project`
+        WHERE user_id = #{userId}
+          AND deleted_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `canvas_project` (project_no, user_id, title, document_json, node_count, file_count,
+                                      document_bytes, version, created_at, updated_at, deleted_at)
+        VALUES (#{projectNo}, #{userId}, #{title}, #{documentJson}, #{nodeCount}, #{fileCount},
+                #{documentBytes}, #{version}, #{createdAt}, #{updatedAt}, #{deletedAt})
+    </insert>
+
+    <!-- 只更新非 null 字段（等价于原 MyBatis-Plus updateById） -->
+    <update id="updateById">
+        UPDATE `canvas_project`
+        <set>
+            <if test="projectNo != null">project_no = #{projectNo},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="title != null">title = #{title},</if>
+            <if test="documentJson != null">document_json = #{documentJson},</if>
+            <if test="nodeCount != null">node_count = #{nodeCount},</if>
+            <if test="fileCount != null">file_count = #{fileCount},</if>
+            <if test="documentBytes != null">document_bytes = #{documentBytes},</if>
+            <if test="version != null">version = #{version},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+            <if test="deletedAt != null">deleted_at = #{deletedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 乐观锁更新：version 校验通过才更新，同时 version = version + 1 -->
+    <update id="updateWithVersion">
+        UPDATE `canvas_project`
+        SET title = #{title},
+            document_json = #{documentJson},
+            document_bytes = #{documentBytes},
+            node_count = #{nodeCount},
+            version = version + 1,
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+          AND version = #{expectedVersion}
+          AND deleted_at IS NULL
+    </update>
+
+    <!-- 软删除：只写 deleted_at，且校验归属与未删除 -->
+    <update id="softDelete">
+        UPDATE `canvas_project`
+        SET deleted_at = #{deletedAt}
+        WHERE id = #{id}
+          AND user_id = #{userId}
+          AND deleted_at IS NULL
+    </update>
+
+</mapper>

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     兑换码表 redeem_code 手写 SQL（原生 MyBatis）
+     status：UNUSED / USED / DISABLED；兑换用条件 UPDATE 原子占用。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.RedeemCodeMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.RedeemCode">
+        <id column="id" property="id"/>
+        <result column="code" property="code"/>
+        <result column="batch_no" property="batchNo"/>
+        <result column="prefix" property="prefix"/>
+        <result column="credits" property="credits"/>
+        <result column="plan_id" property="planId"/>
+        <result column="status" property="status"/>
+        <result column="used_by_user_id" property="usedByUserId"/>
+        <result column="used_at" property="usedAt"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="created_by_admin_id" property="createdByAdminId"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, code, batch_no, prefix, credits, plan_id, status, used_by_user_id, used_at,
+        expires_at, created_by_admin_id, created_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `redeem_code`
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByCode" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `redeem_code`
+        WHERE code = #{code}
+        LIMIT 1
+    </select>
+
+    <!-- created_at 未显式传入时交给数据库默认值（等价于 MyBatis-Plus 插入时忽略 null 字段） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `redeem_code` (code, batch_no, prefix, credits, plan_id, status, used_by_user_id,
+                                   used_at, expires_at, created_by_admin_id, created_at)
+        VALUES (#{code}, #{batchNo}, #{prefix}, #{credits}, #{planId}, #{status}, #{usedByUserId},
+                #{usedAt}, #{expiresAt}, #{createdByAdminId}, IFNULL(#{createdAt}, CURRENT_TIMESTAMP(3)))
+    </insert>
+
+    <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateById">
+        UPDATE `redeem_code`
+        <set>
+            <if test="code != null">code = #{code},</if>
+            <if test="batchNo != null">batch_no = #{batchNo},</if>
+            <if test="prefix != null">prefix = #{prefix},</if>
+            <if test="credits != null">credits = #{credits},</if>
+            <if test="planId != null">plan_id = #{planId},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="usedByUserId != null">used_by_user_id = #{usedByUserId},</if>
+            <if test="usedAt != null">used_at = #{usedAt},</if>
+            <if test="expiresAt != null">expires_at = #{expiresAt},</if>
+            <if test="createdByAdminId != null">created_by_admin_id = #{createdByAdminId},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM `redeem_code`
+    </select>
+
+    <!-- 管理端列表筛选条件：批次号 / 状态都可空 -->
+    <sql id="Page_Where">
+        <where>
+            <if test="batchNo != null and batchNo != ''">
+                AND batch_no = #{batchNo}
+            </if>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+        </where>
+    </sql>
+
+    <select id="countByBatchAndStatus" resultType="long">
+        SELECT COUNT(*) FROM `redeem_code`
+        <include refid="Page_Where"/>
+    </select>
+
+    <select id="selectPageByBatchAndStatus" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `redeem_code`
+        <include refid="Page_Where"/>
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 导出用：按批次查全部（批次为空则查全部），按 id 升序 -->
+    <select id="selectByBatch" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `redeem_code`
+        <where>
+            <if test="batchNo != null and batchNo != ''">
+                AND batch_no = #{batchNo}
+            </if>
+        </where>
+        ORDER BY id ASC
+    </select>
+
+    <!-- 原子占用：只有 UNUSED 才能改成 USED，受影响 0 行说明已被使用 -->
+    <update id="markUsedIfUnused">
+        UPDATE `redeem_code`
+        SET status = 'USED',
+            used_by_user_id = #{userId},
+            used_at = #{usedAt}
+        WHERE id = #{id}
+          AND status = 'UNUSED'
+    </update>
+
+</mapper>

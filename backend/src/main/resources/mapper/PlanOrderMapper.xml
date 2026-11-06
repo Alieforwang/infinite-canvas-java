@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     订单表 plan_order 手写 SQL（原生 MyBatis）
+     type：PURCHASE / MANUAL / GRANT；amount 是 DECIMAL(18,4)，Java 用 BigDecimal。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.PlanOrderMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.PlanOrder">
+        <id column="id" property="id"/>
+        <result column="order_no" property="orderNo"/>
+        <result column="user_id" property="userId"/>
+        <result column="plan_id" property="planId"/>
+        <result column="type" property="type"/>
+        <result column="pay_method" property="payMethod"/>
+        <result column="amount" property="amount"/>
+        <result column="credits" property="credits"/>
+        <result column="status" property="status"/>
+        <result column="operator_admin_id" property="operatorAdminId"/>
+        <result column="remark" property="remark"/>
+        <result column="paid_at" property="paidAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, order_no, user_id, plan_id, type, pay_method, amount, credits, status,
+        operator_admin_id, remark, paid_at, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `plan_order`
+        WHERE id = #{id}
+    </select>
+
+    <!-- created_at/updated_at 未显式传入时交给数据库默认值（等价于 MyBatis-Plus 插入时忽略 null 字段） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `plan_order` (order_no, user_id, plan_id, type, pay_method, amount, credits, status,
+                                  operator_admin_id, remark, paid_at, created_at, updated_at)
+        VALUES (#{orderNo}, #{userId}, #{planId}, #{type}, #{payMethod}, #{amount}, #{credits}, #{status},
+                #{operatorAdminId}, #{remark}, #{paidAt},
+                IFNULL(#{createdAt}, CURRENT_TIMESTAMP(3)), IFNULL(#{updatedAt}, CURRENT_TIMESTAMP(3)))
+    </insert>
+
+</mapper>

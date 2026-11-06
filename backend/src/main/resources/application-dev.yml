@@ -1,0 +1,28 @@
+# ============================================================
+# 本地开发配置（dev profile，IntelliJ IDEA / Maven 直接启动即可）
+#
+# 在 IDEA 里直接 Run CanvasStudioApplication，无需配置任何环境变量：
+#   - profile 默认就是 dev（application.yml 中 ${APP_ENV:dev}）
+#   - 本机 MySQL 5.7：127.0.0.1:3306，库 infinite_canvas_studio，root / 123456
+#   - 存储根目录默认 backend/../storage（即工作区 storage/）
+#
+# 仍可通过环境变量覆盖：DB_URL / DB_USERNAME / DB_PASSWORD / STORAGE_ROOT
+# ============================================================
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/infinite_canvas_studio?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
+
+app:
+  storage:
+    # IDEA 默认工作目录为模块目录 backend/，因此 ../storage 指向工作区 storage/
+    root: ${STORAGE_ROOT:../storage}
+
+# 开发期把 Mapper 执行的 SQL 打到控制台，方便对照 XML 学习。
+# 轮询器每秒都会查一次 video_task，为避免刷屏把 VideoTaskMapper 降到 info；
+# 想观察任务轮询 SQL 时，把它临时改成 debug 即可。
+logging:
+  level:
+    com.infinitecanvas.mapper: debug
+    com.infinitecanvas.mapper.VideoTaskMapper: info

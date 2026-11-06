@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     积分账户表 credit_account 手写 SQL（原生 MyBatis）
+     主键是 user_id（无自增），一个用户一行。
+     HOLD/SETTLE/REFUND/RECHARGE 都是一条条件 UPDATE，不自增主键。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.CreditAccountMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.CreditAccount">
+        <id column="user_id" property="userId"/>
+        <result column="available" property="available"/>
+        <result column="frozen" property="frozen"/>
+        <result column="total_consumed" property="totalConsumed"/>
+        <result column="total_recharged" property="totalRecharged"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        user_id, available, frozen, total_consumed, total_recharged, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `credit_account`
+        WHERE user_id = #{userId}
+    </select>
+
+    <!-- 行锁：必须在事务中调用（创建任务 / 结算 / 退款 / 充值前先锁账户） -->
+    <select id="selectForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `credit_account`
+        WHERE user_id = #{userId}
+        FOR UPDATE
+    </select>
+
+    <!-- 开户：主键 user_id 由调用方传入，不是自增 -->
+    <insert id="insert">
+        INSERT INTO `credit_account` (user_id, available, frozen, total_consumed, total_recharged, updated_at)
+        VALUES (#{userId}, #{available}, #{frozen}, #{totalConsumed}, #{totalRecharged},
+                IFNULL(#{updatedAt}, CURRENT_TIMESTAMP(3)))
+    </insert>
+
+    <!-- 预扣：available - credits，frozen + credits -->
+    <update id="hold">
+        UPDATE `credit_account`
+        SET available = available - #{credits},
+            frozen = frozen + #{credits}
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 结算：frozen - held，available + (held - actual)，total_consumed + actual -->
+    <update id="settle">
+        UPDATE `credit_account`
+        SET frozen = frozen - #{held},
+            available = available + (#{held} - #{actual}),
+            total_consumed = total_consumed + #{actual}
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 退款：frozen - held，available + held -->
+    <update id="refund">
+        UPDATE `credit_account`
+        SET frozen = frozen - #{held},
+            available = available + #{held}
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 充值/赠送/套餐：available + amount，total_recharged 只累加非负部分 -->
+    <update id="recharge">
+        UPDATE `credit_account`
+        SET available = available + #{amount},
+            total_recharged = total_recharged + GREATEST(#{amount}, 0)
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 管理员调账：只加 available（amount 可为负） -->
+    <update id="adjustAvailable">
+        UPDATE `credit_account`
+        SET available = available + #{amount}
+        WHERE user_id = #{userId}
+    </update>
+
+</mapper>

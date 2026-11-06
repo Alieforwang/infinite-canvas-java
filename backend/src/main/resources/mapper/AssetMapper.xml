@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     素材资产表 asset 手写 SQL（原生 MyBatis）
+     分页统一使用 ORDER BY id DESC + LIMIT #{offset}, #{limit}
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.AssetMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.Asset">
+        <id column="id" property="id"/>
+        <result column="asset_no" property="assetNo"/>
+        <result column="user_id" property="userId"/>
+        <result column="kind" property="kind"/>
+        <result column="title" property="title"/>
+        <result column="file_id" property="fileId"/>
+        <result column="cover_file_id" property="coverFileId"/>
+        <result column="text_content" property="textContent"/>
+        <result column="tags" property="tags"/>
+        <result column="source" property="source"/>
+        <result column="note" property="note"/>
+        <result column="metadata" property="metadata"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="deleted_at" property="deletedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, asset_no, user_id, kind, title, file_id, cover_file_id, text_content, tags, source, note,
+        metadata, created_at, updated_at, deleted_at
+    </sql>
+
+    <!-- 按主键查询：不判断软删除（语义同原 selectById） -->
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `asset`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 按 asset_no + user_id 查询：排除已删除 -->
+    <select id="selectByAssetNoAndUserNotDeleted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `asset`
+        WHERE asset_no = #{assetNo}
+          AND user_id = #{userId}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `asset` (asset_no, user_id, kind, title, file_id, cover_file_id, text_content, tags,
+                             source, note, metadata, created_at, updated_at, deleted_at)
+        VALUES (#{assetNo}, #{userId}, #{kind}, #{title}, #{fileId}, #{coverFileId}, #{textContent}, #{tags},
+                #{source}, #{note}, #{metadata}, #{createdAt}, #{updatedAt}, #{deletedAt})
+    </insert>
+
+    <!-- 只更新非 null 字段（等价于原 MyBatis-Plus updateById） -->
+    <update id="updateById">
+        UPDATE `asset`
+        <set>
+            <if test="assetNo != null">asset_no = #{assetNo},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="kind != null">kind = #{kind},</if>
+            <if test="title != null">title = #{title},</if>
+            <if test="fileId != null">file_id = #{fileId},</if>
+            <if test="coverFileId != null">cover_file_id = #{coverFileId},</if>
+            <if test="textContent != null">text_content = #{textContent},</if>
+            <if test="tags != null">tags = #{tags},</if>
+            <if test="source != null">source = #{source},</if>
+            <if test="note != null">note = #{note},</if>
+            <if test="metadata != null">metadata = #{metadata},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+            <if test="deletedAt != null">deleted_at = #{deletedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!-- 分页 where 条件：用户隔离 + 未删除 + 可选类型/关键字 -->
+    <sql id="Page_Where">
+        WHERE user_id = #{userId}
+          AND deleted_at IS NULL
+        <if test="kind != null and kind != ''">
+            AND kind = #{kind}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (title LIKE CONCAT('%', #{keyword}, '%') OR note LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+    </sql>
+
+    <select id="countPage" resultType="long">
+        SELECT COUNT(*)
+        FROM `asset`
+        <include refid="Page_Where"/>
+    </select>
+
+    <select id="selectPage" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `asset`
+        <include refid="Page_Where"/>
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+</mapper>

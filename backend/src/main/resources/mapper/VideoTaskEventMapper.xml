@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     视频任务事件表 SQL（原生 MyBatis，手写便于修改学习）
+     任务状态流转审计：from_status -> to_status
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.VideoTaskEventMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.VideoTaskEvent">
+        <id column="id" property="id"/>
+        <result column="task_id" property="taskId"/>
+        <result column="from_status" property="fromStatus"/>
+        <result column="to_status" property="toStatus"/>
+        <result column="source" property="source"/>
+        <result column="detail" property="detail"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, task_id, from_status, to_status, source, detail, created_at
+    </sql>
+
+    <!-- 插入：null 字段不写列，交给数据库默认值 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO video_task_event
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="taskId != null">task_id,</if>
+            <if test="fromStatus != null">from_status,</if>
+            <if test="toStatus != null">to_status,</if>
+            <if test="source != null">source,</if>
+            <if test="detail != null">detail,</if>
+            <if test="createdAt != null">created_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="taskId != null">#{taskId},</if>
+            <if test="fromStatus != null">#{fromStatus},</if>
+            <if test="toStatus != null">#{toStatus},</if>
+            <if test="source != null">#{source},</if>
+            <if test="detail != null">#{detail},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+        </trim>
+    </insert>
+
+    <select id="selectByTaskId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM video_task_event
+        WHERE task_id = #{taskId}
+        ORDER BY id ASC
+    </select>
+
+</mapper>

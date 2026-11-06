@@ -1,0 +1,266 @@
+/* Sci-fi landing page visuals (scoped by .sc-* class names) */
+
+.sc-page {
+    background:
+        radial-gradient(1200px 600px at 12% 8%, rgba(34, 211, 238, 0.16), transparent 60%),
+        radial-gradient(900px 500px at 88% 4%, rgba(168, 85, 247, 0.14), transparent 60%),
+        radial-gradient(1000px 700px at 50% 100%, rgba(14, 165, 233, 0.1), transparent 65%),
+        #04070f;
+    color: #e6f7ff;
+    font-feature-settings: "ss01" on;
+}
+
+.sc-starfield,
+.sc-grid {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.sc-starfield {
+    opacity: 0.55;
+    background-image:
+        radial-gradient(1px 1px at 20% 30%, rgba(148, 233, 255, 0.9), transparent 60%),
+        radial-gradient(1px 1px at 70% 12%, rgba(255, 255, 255, 0.8), transparent 60%),
+        radial-gradient(1.5px 1.5px at 42% 72%, rgba(125, 211, 252, 0.9), transparent 60%),
+        radial-gradient(1px 1px at 88% 62%, rgba(255, 255, 255, 0.7), transparent 60%),
+        radial-gradient(1px 1px at 10% 82%, rgba(167, 139, 250, 0.9), transparent 60%),
+        radial-gradient(1.5px 1.5px at 60% 44%, rgba(148, 233, 255, 0.8), transparent 60%);
+    animation: sc-drift 26s ease-in-out infinite alternate;
+}
+
+.sc-grid {
+    background-image:
+        linear-gradient(rgba(56, 189, 248, 0.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.09) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 20%, #000 30%, transparent 78%);
+    animation: sc-grid-move 20s linear infinite;
+}
+
+@keyframes sc-grid-move {
+    from { background-position: 0 0, 0 0; }
+    to { background-position: 0 44px, 44px 0; }
+}
+
+@keyframes sc-drift {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-18px, 12px, 0); }
+}
+
+.sc-scan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+        to bottom,
+        rgba(125, 211, 252, 0.055) 0,
+        rgba(125, 211, 252, 0.055) 1px,
+        transparent 1px,
+        transparent 4px
+    );
+    pointer-events: none;
+    mix-blend-mode: screen;
+}
+
+.sc-hud {
+    border: 1px solid rgba(103, 232, 249, 0.24);
+    background: linear-gradient(160deg, rgba(8, 24, 40, 0.92), rgba(4, 9, 18, 0.88));
+    box-shadow:
+        0 0 0 1px rgba(6, 182, 212, 0.06),
+        0 24px 80px rgba(2, 6, 23, 0.85),
+        inset 0 1px 0 rgba(148, 233, 255, 0.08);
+    position: relative;
+}
+
+.sc-hud::before,
+.sc-hud::after {
+    content: "";
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-color: rgba(103, 232, 249, 0.85);
+    border-style: solid;
+    pointer-events: none;
+}
+
+.sc-hud::before {
+    top: -1px;
+    left: -1px;
+    border-width: 1px 0 0 1px;
+}
+
+.sc-hud::after {
+    bottom: -1px;
+    right: -1px;
+    border-width: 0 1px 1px 0;
+}
+
+.sc-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #7dd3fc;
+}
+
+.sc-kicker::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #22d3ee;
+    box-shadow: 0 0 12px #22d3ee;
+    animation: sc-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes sc-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.72); }
+}
+
+.sc-title {
+    background: linear-gradient(96deg, #f0f9ff 0%, #7dd3fc 38%, #c4b5fd 68%, #f0abfc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 32px rgba(56, 189, 248, 0.28));
+}
+
+.sc-cta {
+    background: linear-gradient(100deg, #22d3ee 0%, #60a5fa 46%, #a78bfa 100%) !important;
+    border: none !important;
+    color: #020617 !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0.35), 0 8px 30px rgba(59, 130, 246, 0.28) !important;
+}
+
+.sc-cta:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 0 40px rgba(34, 211, 238, 0.5), 0 10px 34px rgba(147, 51, 234, 0.3) !important;
+}
+
+.sc-ghost {
+    border: 1px solid rgba(148, 233, 255, 0.28) !important;
+    background: rgba(8, 23, 38, 0.6) !important;
+    color: #d7f3ff !important;
+}
+
+.sc-ghost:hover {
+    border-color: rgba(148, 233, 255, 0.6) !important;
+    background: rgba(14, 116, 144, 0.22) !important;
+}
+
+.sc-card {
+    position: relative;
+    border: 1px solid rgba(103, 232, 249, 0.16);
+    background: linear-gradient(160deg, rgba(9, 26, 42, 0.72), rgba(4, 10, 20, 0.86));
+    transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+    overflow: hidden;
+}
+
+.sc-card:hover {
+    border-color: rgba(103, 232, 249, 0.55);
+    transform: translateY(-3px);
+    box-shadow: 0 18px 60px rgba(8, 145, 178, 0.18);
+}
+
+.sc-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(120deg, transparent 30%, rgba(103, 232, 249, 0.08), transparent 70%);
+    transform: translateX(-120%);
+    transition: transform 0.6s ease;
+    pointer-events: none;
+}
+
+.sc-card:hover::after {
+    transform: translateX(120%);
+}
+
+.sc-ticker {
+    display: flex;
+    gap: 2.5rem;
+    width: max-content;
+    animation: sc-marquee 32s linear infinite;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: rgba(125, 211, 252, 0.62);
+}
+
+@keyframes sc-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+}
+
+.sc-glow-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.55), rgba(167, 139, 250, 0.45), transparent);
+}
+
+.sc-orbit {
+    position: absolute;
+    border: 1px dashed rgba(103, 232, 249, 0.22);
+    border-radius: 999px;
+    animation: sc-spin 28s linear infinite;
+}
+
+@keyframes sc-spin {
+    to { transform: rotate(360deg); }
+}
+
+.sc-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.06em;
+}
+
+.sc-reveal {
+    animation: sc-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sc-rise {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.sc-scanline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.78), transparent);
+    filter: blur(0.5px);
+    animation: sc-scan 5.5s linear infinite;
+}
+
+@keyframes sc-scan {
+    0% { top: 4%; opacity: 0; }
+    12% { opacity: 1; }
+    88% { opacity: 1; }
+    100% { top: 96%; opacity: 0; }
+}
+
+.sc-grain {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 3px 3px;
+    opacity: 0.35;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sc-starfield,
+    .sc-grid,
+    .sc-ticker,
+    .sc-orbit,
+    .sc-scanline,
+    .sc-kicker::before,
+    .sc-reveal {
+        animation: none !important;
+    }
+}

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     套餐表 plan 手写 SQL（原生 MyBatis）
+     type：CREDIT_PACK / PLAN；price_amount 是 DECIMAL(18,4)，Java 用 BigDecimal。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.PlanMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.Plan">
+        <id column="id" property="id"/>
+        <result column="code" property="code"/>
+        <result column="name" property="name"/>
+        <result column="type" property="type"/>
+        <result column="price_amount" property="priceAmount"/>
+        <result column="credits" property="credits"/>
+        <result column="bonus_credits" property="bonusCredits"/>
+        <result column="valid_days" property="validDays"/>
+        <result column="description" property="description"/>
+        <result column="sort" property="sort"/>
+        <result column="enabled" property="enabled"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, code, name, type, price_amount, credits, bonus_credits, valid_days, description,
+        sort, enabled, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `plan`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 用户端套餐列表：只取已上架，按排序号升序 -->
+    <select id="selectEnabledSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `plan`
+        WHERE enabled = 1
+        ORDER BY sort ASC
+    </select>
+
+    <!-- 管理端套餐列表：全部套餐，按排序号、id 升序 -->
+    <select id="selectAllSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `plan`
+        ORDER BY sort ASC, id ASC
+    </select>
+
+    <!-- created_at/updated_at 未显式传入时交给数据库默认值（等价于 MyBatis-Plus 插入时忽略 null 字段） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `plan` (code, name, type, price_amount, credits, bonus_credits, valid_days,
+                            description, sort, enabled, created_at, updated_at)
+        VALUES (#{code}, #{name}, #{type}, #{priceAmount}, #{credits}, #{bonusCredits}, #{validDays},
+                #{description}, #{sort}, #{enabled},
+                IFNULL(#{createdAt}, CURRENT_TIMESTAMP(3)), IFNULL(#{updatedAt}, CURRENT_TIMESTAMP(3)))
+    </insert>
+
+    <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateById">
+        UPDATE `plan`
+        <set>
+            <if test="code != null">code = #{code},</if>
+            <if test="name != null">name = #{name},</if>
+            <if test="type != null">type = #{type},</if>
+            <if test="priceAmount != null">price_amount = #{priceAmount},</if>
+            <if test="credits != null">credits = #{credits},</if>
+            <if test="bonusCredits != null">bonus_credits = #{bonusCredits},</if>
+            <if test="validDays != null">valid_days = #{validDays},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="sort != null">sort = #{sort},</if>
+            <if test="enabled != null">enabled = #{enabled},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+</mapper>

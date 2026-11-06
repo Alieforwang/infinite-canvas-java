@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     上游渠道表 SQL（原生 MyBatis，手写便于修改学习）
+     api_key_cipher 为 VARBINARY，实体中是 byte[]
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.ChannelMapper">
+
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.Channel">
+        <id column="id" property="id"/>
+        <result column="name" property="name"/>
+        <result column="protocol" property="protocol"/>
+        <result column="capabilities" property="capabilities"/>
+        <result column="base_url" property="baseUrl"/>
+        <result column="normalized_base_url" property="normalizedBaseUrl"/>
+        <result column="api_key_cipher" property="apiKeyCipher"/>
+        <result column="api_key_mask" property="apiKeyMask"/>
+        <result column="auth_type" property="authType"/>
+        <result column="auth_header" property="authHeader"/>
+        <result column="extra_headers" property="extraHeaders"/>
+        <result column="connect_timeout_ms" property="connectTimeoutMs"/>
+        <result column="read_timeout_ms" property="readTimeoutMs"/>
+        <result column="max_concurrency" property="maxConcurrency"/>
+        <result column="enabled" property="enabled"/>
+        <result column="last_test_at" property="lastTestAt"/>
+        <result column="last_test_ok" property="lastTestOk"/>
+        <result column="last_test_message" property="lastTestMessage"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, name, protocol, capabilities, base_url, normalized_base_url, api_key_cipher, api_key_mask,
+        auth_type, auth_header, extra_headers, connect_timeout_ms, read_timeout_ms, max_concurrency,
+        enabled, last_test_at, last_test_ok, last_test_message, created_at, updated_at
+    </sql>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM channel
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByName" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM channel
+        WHERE name = #{name}
+        LIMIT 1
+    </select>
+
+    <select id="selectAllSorted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM channel
+        ORDER BY id ASC
+    </select>
+
+    <!-- 插入：null 字段不写列，交给数据库默认值（与 MyBatis-Plus insert 行为一致） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO channel
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="name != null">name,</if>
+            <if test="protocol != null">protocol,</if>
+            <if test="capabilities != null">capabilities,</if>
+            <if test="baseUrl != null">base_url,</if>
+            <if test="normalizedBaseUrl != null">normalized_base_url,</if>
+            <if test="apiKeyCipher != null">api_key_cipher,</if>
+            <if test="apiKeyMask != null">api_key_mask,</if>
+            <if test="authType != null">auth_type,</if>
+            <if test="authHeader != null">auth_header,</if>
+            <if test="extraHeaders != null">extra_headers,</if>
+            <if test="connectTimeoutMs != null">connect_timeout_ms,</if>
+            <if test="readTimeoutMs != null">read_timeout_ms,</if>
+            <if test="maxConcurrency != null">max_concurrency,</if>
+            <if test="enabled != null">enabled,</if>
+            <if test="lastTestAt != null">last_test_at,</if>
+            <if test="lastTestOk != null">last_test_ok,</if>
+            <if test="lastTestMessage != null">last_test_message,</if>
+            <if test="createdAt != null">created_at,</if>
+            <if test="updatedAt != null">updated_at,</if>
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="name != null">#{name},</if>
+            <if test="protocol != null">#{protocol},</if>
+            <if test="capabilities != null">#{capabilities},</if>
+            <if test="baseUrl != null">#{baseUrl},</if>
+            <if test="normalizedBaseUrl != null">#{normalizedBaseUrl},</if>
+            <if test="apiKeyCipher != null">#{apiKeyCipher},</if>
+            <if test="apiKeyMask != null">#{apiKeyMask},</if>
+            <if test="authType != null">#{authType},</if>
+            <if test="authHeader != null">#{authHeader},</if>
+            <if test="extraHeaders != null">#{extraHeaders},</if>
+            <if test="connectTimeoutMs != null">#{connectTimeoutMs},</if>
+            <if test="readTimeoutMs != null">#{readTimeoutMs},</if>
+            <if test="maxConcurrency != null">#{maxConcurrency},</if>
+            <if test="enabled != null">#{enabled},</if>
+            <if test="lastTestAt != null">#{lastTestAt},</if>
+            <if test="lastTestOk != null">#{lastTestOk},</if>
+            <if test="lastTestMessage != null">#{lastTestMessage},</if>
+            <if test="createdAt != null">#{createdAt},</if>
+            <if test="updatedAt != null">#{updatedAt},</if>
+        </trim>
+    </insert>
+
+    <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateById">
+        UPDATE channel
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="protocol != null">protocol = #{protocol},</if>
+            <if test="capabilities != null">capabilities = #{capabilities},</if>
+            <if test="baseUrl != null">base_url = #{baseUrl},</if>
+            <if test="normalizedBaseUrl != null">normalized_base_url = #{normalizedBaseUrl},</if>
+            <if test="apiKeyCipher != null">api_key_cipher = #{apiKeyCipher},</if>
+            <if test="apiKeyMask != null">api_key_mask = #{apiKeyMask},</if>
+            <if test="authType != null">auth_type = #{authType},</if>
+            <if test="authHeader != null">auth_header = #{authHeader},</if>
+            <if test="extraHeaders != null">extra_headers = #{extraHeaders},</if>
+            <if test="connectTimeoutMs != null">connect_timeout_ms = #{connectTimeoutMs},</if>
+            <if test="readTimeoutMs != null">read_timeout_ms = #{readTimeoutMs},</if>
+            <if test="maxConcurrency != null">max_concurrency = #{maxConcurrency},</if>
+            <if test="enabled != null">enabled = #{enabled},</if>
+            <if test="lastTestAt != null">last_test_at = #{lastTestAt},</if>
+            <if test="lastTestOk != null">last_test_ok = #{lastTestOk},</if>
+            <if test="lastTestMessage != null">last_test_message = #{lastTestMessage},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="updatedAt != null">updated_at = #{updatedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM channel WHERE id = #{id}
+    </delete>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM channel
+    </select>
+
+</mapper>

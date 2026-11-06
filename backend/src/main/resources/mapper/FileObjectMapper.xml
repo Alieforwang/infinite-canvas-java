@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     文件对象表 file_object 手写 SQL（原生 MyBatis）
+     注意：查询方法的删除条件严格区分「带/不带 deleted_at IS NULL」两种语义。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.FileObjectMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.FileObject">
+        <id column="id" property="id"/>
+        <result column="file_no" property="fileNo"/>
+        <result column="user_id" property="userId"/>
+        <result column="kind" property="kind"/>
+        <result column="storage_provider" property="storageProvider"/>
+        <result column="storage_key" property="storageKey"/>
+        <result column="original_name" property="originalName"/>
+        <result column="content_type" property="contentType"/>
+        <result column="bytes" property="bytes"/>
+        <result column="sha256" property="sha256"/>
+        <result column="width" property="width"/>
+        <result column="height" property="height"/>
+        <result column="duration_ms" property="durationMs"/>
+        <result column="ref_count" property="refCount"/>
+        <result column="status" property="status"/>
+        <result column="source_task_id" property="sourceTaskId"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="deleted_at" property="deletedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, file_no, user_id, kind, storage_provider, storage_key, original_name, content_type,
+        `bytes`, sha256, width, height, duration_ms, ref_count, status, source_task_id, created_at, deleted_at
+    </sql>
+
+    <!-- 按主键查询：不判断软删除（语义同原 selectById） -->
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `file_object`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 按 file_no 查询：不判断软删除 -->
+    <select id="selectByFileNo" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `file_object`
+        WHERE file_no = #{fileNo}
+        LIMIT 1
+    </select>
+
+    <!-- 按 file_no 查询：排除已删除 -->
+    <select id="selectByFileNoNotDeleted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `file_object`
+        WHERE file_no = #{fileNo}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <!-- 按 file_no + user_id 查询：不判断软删除 -->
+    <select id="selectByFileNoAndUser" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `file_object`
+        WHERE file_no = #{fileNo}
+          AND user_id = #{userId}
+        LIMIT 1
+    </select>
+
+    <!-- 按 file_no + user_id 查询：排除已删除 -->
+    <select id="selectByFileNoAndUserNotDeleted" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `file_object`
+        WHERE file_no = #{fileNo}
+          AND user_id = #{userId}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `file_object` (file_no, user_id, kind, storage_provider, storage_key, original_name,
+                                   content_type, `bytes`, sha256, width, height, duration_ms, ref_count, status,
+                                   source_task_id, created_at, deleted_at)
+        VALUES (#{fileNo}, #{userId}, #{kind}, #{storageProvider}, #{storageKey}, #{originalName},
+                #{contentType}, #{bytes}, #{sha256}, #{width}, #{height}, #{durationMs}, #{refCount}, #{status},
+                #{sourceTaskId}, #{createdAt}, #{deletedAt})
+    </insert>
+
+    <!-- 只更新非 null 字段（等价于原 MyBatis-Plus updateById） -->
+    <update id="updateById">
+        UPDATE `file_object`
+        <set>
+            <if test="fileNo != null">file_no = #{fileNo},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="kind != null">kind = #{kind},</if>
+            <if test="storageProvider != null">storage_provider = #{storageProvider},</if>
+            <if test="storageKey != null">storage_key = #{storageKey},</if>
+            <if test="originalName != null">original_name = #{originalName},</if>
+            <if test="contentType != null">content_type = #{contentType},</if>
+            <if test="bytes != null">`bytes` = #{bytes},</if>
+            <if test="sha256 != null">sha256 = #{sha256},</if>
+            <if test="width != null">width = #{width},</if>
+            <if test="height != null">height = #{height},</if>
+            <if test="durationMs != null">duration_ms = #{durationMs},</if>
+            <if test="refCount != null">ref_count = #{refCount},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="sourceTaskId != null">source_task_id = #{sourceTaskId},</if>
+            <if test="createdAt != null">created_at = #{createdAt},</if>
+            <if test="deletedAt != null">deleted_at = #{deletedAt},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+</mapper>

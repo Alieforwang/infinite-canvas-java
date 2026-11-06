@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     审计日志表 audit_log 手写 SQL（原生 MyBatis）
+     只追加写入，不提供更新/删除。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.AuditLogMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.AuditLog">
+        <id column="id" property="id"/>
+        <result column="actor_type" property="actorType"/>
+        <result column="actor_id" property="actorId"/>
+        <result column="action" property="action"/>
+        <result column="target_type" property="targetType"/>
+        <result column="target_id" property="targetId"/>
+        <result column="detail_json" property="detailJson"/>
+        <result column="ip" property="ip"/>
+        <result column="request_id" property="requestId"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, actor_type, actor_id, action, target_type, target_id, detail_json, ip, request_id, created_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `audit_log` (actor_type, actor_id, action, target_type, target_id, detail_json, ip,
+                                 request_id, created_at)
+        VALUES (#{actorType}, #{actorId}, #{action}, #{targetType}, #{targetId}, #{detailJson}, #{ip},
+                #{requestId}, #{createdAt})
+    </insert>
+
+</mapper>

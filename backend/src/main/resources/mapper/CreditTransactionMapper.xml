@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- ============================================================
+     积分流水表 credit_transaction 手写 SQL（原生 MyBatis）
+     流水只增不改：业务上只有 INSERT + 查询。
+     幂等：idempotency_key 唯一索引（finalize:{taskNo} 让 SETTLE/REFUND 物理互斥）。
+     ============================================================ -->
+<mapper namespace="com.infinitecanvas.mapper.CreditTransactionMapper">
+
+    <!-- 数据库列 -> 实体属性映射（下划线转驼峰） -->
+    <resultMap id="BaseResultMap" type="com.infinitecanvas.entity.CreditTransaction">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="biz_type" property="bizType"/>
+        <result column="available_delta" property="availableDelta"/>
+        <result column="frozen_delta" property="frozenDelta"/>
+        <result column="balance_after" property="balanceAfter"/>
+        <result column="task_id" property="taskId"/>
+        <result column="order_id" property="orderId"/>
+        <result column="redeem_code_id" property="redeemCodeId"/>
+        <result column="idempotency_key" property="idempotencyKey"/>
+        <result column="operator_admin_id" property="operatorAdminId"/>
+        <result column="remark" property="remark"/>
+        <result column="request_id" property="requestId"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, user_id, biz_type, available_delta, frozen_delta, balance_after, task_id, order_id,
+        redeem_code_id, idempotency_key, operator_admin_id, remark, request_id, created_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `credit_transaction` (user_id, biz_type, available_delta, frozen_delta, balance_after,
+                                          task_id, order_id, redeem_code_id, idempotency_key,
+                                          operator_admin_id, remark, request_id, created_at)
+        VALUES (#{userId}, #{bizType}, #{availableDelta}, #{frozenDelta}, #{balanceAfter},
+                #{taskId}, #{orderId}, #{redeemCodeId}, #{idempotencyKey},
+                #{operatorAdminId}, #{remark}, #{requestId}, #{createdAt})
+    </insert>
+
+    <!-- 后台概览「今日发放积分」：按 UTC 自然日统计所有正数入账（与旧实现一致） -->
+    <select id="creditsGrantedToday" resultType="long">
+        SELECT COALESCE(SUM(available_delta), 0)
+        FROM `credit_transaction`
+        WHERE created_at &gt;= UTC_DATE()
+          AND available_delta &gt; 0
+    </select>
+
+    <!-- 任务是否已产生终态流水（SETTLE 或 REFUND），用于防止重复退款/结算 -->
+    <select id="countFinalize" resultType="long">
+        SELECT COUNT(*)
+        FROM `credit_transaction`
+        WHERE task_id = #{taskId}
+          AND biz_type IN ('SETTLE', 'REFUND')
+    </select>
+
+    <!-- 任务详情里的资金流水，按写入顺序（id 升序）展示 -->
+    <select id="selectByTask" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `credit_transaction`
+        WHERE task_id = #{taskId}
+        ORDER BY id ASC
+    </select>
+
+    <!-- 用户流水分页：最新的在前 -->
+    <select id="selectByUserPaged" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM `credit_transaction`
+        WHERE user_id = #{userId}
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*)
+        FROM `credit_transaction`
+        WHERE user_id = #{userId}
+    </select>
+
+</mapper>
