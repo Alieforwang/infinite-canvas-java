@@ -1,7 +1,7 @@
 export default {
     meta: {
         title: "无限画布 · AI 视频生成平台",
-        description: "接入 OpenAI 兼容视频模型的无限画布创作平台：视频创作台、无限画布、云端资产与积分计费。",
+        description: "接入 OpenAI 兼容视频模型的无限画布创作平台：视频创作台、无限画布、云端资产与人民币计费。",
     },
     theme: { toggle: "切换主题" },
     common: {

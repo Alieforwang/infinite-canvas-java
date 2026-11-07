@@ -157,7 +157,7 @@ public class AdminTaskService {
                 task.getHeldCredits() == null ? 0 : task.getHeldCredits(),
                 reason == null || reason.isBlank() ? "管理员手工退款" : reason);
         if (!refunded) {
-            throw new BizException(ErrorCode.TASK_40901, "退款失败：无可退积分", null, 409);
+            throw new BizException(ErrorCode.TASK_40901, "退款失败：无可退金额", null, 409);
         }
         auditService.record("ADMIN", adminId, "TASK_REFUND", "TASK", taskNo,
                 "{\"reason\":\"" + (reason == null ? "" : reason) + "\"}", "", MDC.get(com.infinitecanvas.common.RequestIdFilter.MDC_KEY));
@@ -169,13 +169,7 @@ public class AdminTaskService {
         if (!VideoTaskService.ACTIVE_STATUSES.contains(task.getStatus())) {
             throw new BizException(ErrorCode.TASK_40901, "任务已结束，无法取消", null, 409);
         }
-        int updated = taskMapper.cancelActive(task.getId(), LocalDateTime.now(ZoneOffset.UTC),
-                true, VideoTaskService.ACTIVE_STATUSES);
-        if (updated == 0) {
-            throw new BizException(ErrorCode.TASK_40901, "任务状态已变化，请刷新", null, 409);
-        }
-        billingService.refund(task.getUserId(), task.getId(), task.getTaskNo(),
-                task.getHeldCredits() == null ? 0 : task.getHeldCredits(), "管理员取消退款");
+        taskService.cancelTask(task, true);
         auditService.record("ADMIN", adminId, "TASK_CANCEL", "TASK", taskNo, "{}", "",
                 MDC.get(com.infinitecanvas.common.RequestIdFilter.MDC_KEY));
     }

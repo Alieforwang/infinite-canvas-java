@@ -38,6 +38,14 @@ public class SettingService {
         }
     }
 
+    public double getDouble(String key, double defaultValue) {
+        try {
+            return Double.parseDouble(get(key, String.valueOf(defaultValue)).trim());
+        } catch (NumberFormatException ex) {
+            return defaultValue;
+        }
+    }
+
     public boolean getBool(String key, boolean defaultValue) {
         String value = get(key, null);
         if (value == null) {
@@ -84,7 +92,9 @@ public class SettingService {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("registrationOpen", getBool("user.registration_open", true));
         map.put("notice", get("site.notice", ""));
-        map.put("exchangePerYuan", getLong("credit.exchange_per_yuan", 100));
+        map.put("exchangePerYuan", MoneyAmounts.unitsPerYuan(this));
+        map.put("currency", "CNY");
+        map.put("currencyUnit", "元");
         return map;
     }
 }

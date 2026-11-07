@@ -21,7 +21,8 @@ class LogicalModelRoutingTest {
         VideoModel canonical = model(10L, "veo-fast", "Veo Fast");
         VideoModelMapper mapper = mapper(hiddenRoute, canonical);
         VideoTaskService service = new VideoTaskService(null, null, mapper, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         VideoModel resolved = service.resolveCanonicalModel(new VideoTaskService.CreateCommand(
                 null, hiddenRoute.getId(), "prompt", 8, "720p", null, null,
@@ -29,6 +30,21 @@ class LogicalModelRoutingTest {
 
         assertEquals(canonical.getId(), resolved.getId());
         assertEquals("Veo Fast", resolved.getDisplayName());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"llm", "unknown", "image"})
+    void nonVideoLegacyRouteCannotAliasIntoVideoGroupWithTheSameKey(String capability) {
+        VideoModel foreign = model(20L, "shared", "Other capability");
+        foreign.setCapability(capability);
+        VideoModelMapper mapper = mapper(foreign, model(10L, "shared", "Video"));
+        VideoTaskService service = new VideoTaskService(null, null, mapper, null, null, null,
+                null, null, null, null, null, null,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
+        org.junit.jupiter.api.Assertions.assertThrows(com.infinitecanvas.common.BizException.class,
+                () -> service.resolveCanonicalModel(new VideoTaskService.CreateCommand(
+                        null, foreign.getId(), "prompt", 8, "720p", null, null,
+                        false, false, "frames", List.of())));
     }
 
     @Test

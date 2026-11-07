@@ -17,10 +17,9 @@ import {
     Typography,
 } from "antd";
 import type { TableColumnsType } from "antd";
-import { Pencil, PlugZap, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Pencil, PlugZap, Plus, RefreshCw, Trash2, PowerOff } from "lucide-react";
 
 import { adminApi } from "../api/admin";
-import { ApiError } from "../api/http";
 import { PageHead } from "../components/PageHead";
 import { useFeedback } from "../lib/feedback";
 import { formatDateTime } from "../lib/format";
@@ -40,7 +39,8 @@ interface ChannelFormValues {
 
 const PROTOCOL_OPTIONS = [
     { value: "openai-official", label: "openai-official（OpenAI 官方兼容）" },
-    { value: "newapi", label: "newapi（NewAPI 兼容）" },
+    { value: "newapi", label: "newapi（NewAPI / 多元探索 multipart）" },
+    { value: "openai-json", label: "openai-json（JSON Body 视频，Veo/Grok 风格）" },
     { value: "sub2api", label: "sub2api（Grok 视频）" },
 ];
 
@@ -62,6 +62,7 @@ const AUTH_TYPE_OPTIONS = [
 const PROTOCOL_COLORS: Record<string, string> = {
     "openai-official": "geekblue",
     newapi: "purple",
+    "openai-json": "orange",
     "json-envelope": "cyan",
     "dual-dialect": "gold",
     sub2api: "green",
@@ -115,7 +116,7 @@ export function ChannelsPage() {
         setDrawerOpen(true);
     };
 
-    const openEdit = (record: Channel) => {
+    const openEdit = (record: Channel, disable = false) => {
         setEditing(record);
         form.resetFields();
         form.setFieldsValue({
@@ -127,7 +128,7 @@ export function ChannelsPage() {
             authHeader: "X-API-Key",
             capabilities: record.capabilities?.length ? record.capabilities : ["video"],
             maxConcurrency: record.maxConcurrency,
-            enabled: record.enabled === 1,
+            enabled: disable ? false : record.enabled === 1,
         });
         setDrawerOpen(true);
     };
@@ -190,13 +191,6 @@ export function ChannelsPage() {
             showSuccess("渠道已删除");
         } catch (err) {
             showApiError(err);
-            if (err instanceof ApiError && err.status === 409) {
-                Modal.info({
-                    title: "渠道未删除，已自动改为停用",
-                    content: `渠道「${record.name}」下仍有模型，系统已将其停用。请先处理该渠道下的模型。`,
-                    okText: "知道了",
-                });
-            }
         } finally {
             setDeletingId(null);
             await load();
@@ -301,7 +295,7 @@ export function ChannelsPage() {
         {
             title: "操作",
             key: "actions",
-            width: 220,
+            width: 270,
             fixed: "right",
             render: (_: unknown, record: Channel) => (
                 <Space size={0}>
@@ -317,9 +311,14 @@ export function ChannelsPage() {
                     <Button type="link" size="small" icon={<Pencil size={14} />} onClick={() => openEdit(record)}>
                         编辑
                     </Button>
+                    {record.enabled === 1 ? (
+                        <Button type="link" size="small" icon={<PowerOff size={14} />} onClick={() => openEdit(record, true)}>
+                            停用
+                        </Button>
+                    ) : null}
                     <Popconfirm
-                        title="删除渠道"
-                        description="渠道下无模型时将直接删除；若仍有模型，系统会改为停用。"
+                        title="永久删除渠道"
+                        description="渠道下有模型或有历史任务时无法删除，请先停用该渠道；无关联数据时才会从数据库中删除。"
                         okText="确认删除"
                         okButtonProps={{ danger: true, loading: deletingId === record.id }}
                         cancelText="取消"

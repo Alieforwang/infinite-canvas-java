@@ -33,6 +33,10 @@ public interface VideoTaskMapper {
 
     long countAll();
 
+    long countByModelId(@Param("modelId") Long modelId);
+
+    long countByChannelId(@Param("channelId") Long channelId);
+
     long countRunning();
 
     long countCreatedToday();
@@ -46,6 +50,11 @@ public interface VideoTaskMapper {
     long creditsConsumedToday();
 
     long countActiveByUser(@Param("userId") Long userId);
+
+    /** Includes video and image work across every logical model on this channel. */
+    long countActiveByChannel(@Param("channelId") Long channelId);
+
+    long countActiveByModel(@Param("modelId") Long modelId);
 
     long countByUser(@Param("userId") Long userId);
 

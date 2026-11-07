@@ -8,6 +8,13 @@ public final class ModelDtos {
     private ModelDtos() {
     }
 
+    public record ClassificationSuggestion(Long id, String currentCapability, String suggestedCapability,
+                                           String upstreamModel, String modelKey) {}
+
+    public record ClassificationApplyRequest(java.util.List<ClassificationSuggestion> items) {}
+
+    public record ClassificationApplyResult(int updated) {}
+
     public record ModelView(String id, String displayName, String capability,
                             Map<String, Object> params, Map<String, Object> pricing) {
     }
@@ -20,6 +27,8 @@ public final class ModelDtos {
                                  Long minChargeCredits, String supportedSeconds, String supportedSizes,
                                  String supportedRatios, Integer supportsAudio, Integer supportsWatermark,
                                  Integer supportsFirstLastFrame, Integer supportsReferenceImages,
-                                 Integer maxReferenceImages, LocalDateTime createdAt) {
+                                 Integer maxReferenceImages, LocalDateTime createdAt,
+                                 java.math.BigDecimal costPerUnit, Integer costQuotaType,
+                                 LocalDateTime costSyncedAt, Integer currentLoad) {
     }
 }

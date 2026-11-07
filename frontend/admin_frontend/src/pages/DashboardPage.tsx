@@ -18,7 +18,8 @@ import { adminApi } from "../api/admin";
 import { MetricCard } from "../components/MetricCard";
 import { PageHead } from "../components/PageHead";
 import { formatApiError, useFeedback } from "../lib/feedback";
-import { formatCredits, formatDateTime, formatPercent } from "../lib/format";
+import { creditsToYuan, formatCredits, formatDateTime, formatPercent, formatYuan } from "../lib/format";
+import { useCurrency } from "../lib/currency";
 import type { DashboardChannelHealth, DashboardData, DashboardTrendItem } from "../types";
 
 interface TrendRow {
@@ -44,6 +45,8 @@ function buildSevenDayTrend(trend: DashboardTrendItem[]): TrendRow[] {
 
 export function DashboardPage() {
     const { showApiError } = useFeedback();
+    const { ready, exchangePerYuan } = useCurrency();
+    const formatAmount = (value?: number | null) => ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "-";
     const [data, setData] = useState<DashboardData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -91,7 +94,7 @@ export function DashboardPage() {
             ),
         },
         {
-            title: "消耗积分",
+            title: "消耗金额",
             dataIndex: "credits",
             width: 260,
             render: (value: number) => (
@@ -102,7 +105,7 @@ export function DashboardPage() {
                             style={{ width: `${(value / maxCredits) * 100}%` }}
                         />
                     </div>
-                    <span className="trend-bar-value">{formatCredits(value)}</span>
+                    <span className="trend-bar-value">{formatAmount(value)}</span>
                 </div>
             ),
         },
@@ -149,7 +152,7 @@ export function DashboardPage() {
         <>
             <PageHead
                 title="平台概览"
-                description="平台用户、任务、积分与渠道健康度的实时概览。"
+                description="平台用户、任务、金额与渠道健康度的实时概览。"
                 extra={
                     <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>
                         刷新
@@ -202,15 +205,15 @@ export function DashboardPage() {
                 </Col>
                 <Col xs={24} sm={12} lg={6}>
                     <MetricCard
-                        label="今日消耗积分"
-                        value={formatCredits(data?.creditsConsumedToday)}
+                        label="今日消耗金额"
+                        value={formatAmount(data?.creditsConsumedToday)}
                         icon={<Coins size={15} />}
                     />
                 </Col>
                 <Col xs={24} sm={12} lg={6}>
                     <MetricCard
-                        label="今日发放积分"
-                        value={formatCredits(data?.creditsGrantedToday)}
+                        label="今日发放金额"
+                        value={formatAmount(data?.creditsGrantedToday)}
                         icon={<Gift size={15} />}
                     />
                 </Col>
@@ -219,7 +222,7 @@ export function DashboardPage() {
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
                 <Col xs={24} xl={14}>
                     <Card
-                        title="近 7 日任务与积分趋势"
+                        title="近 7 日任务与金额趋势"
                         extra={<span className="muted">数据按天汇总，缺失日期按 0 补齐</span>}
                     >
                         <Table<TrendRow>

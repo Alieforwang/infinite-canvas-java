@@ -9,14 +9,18 @@ import type {
     ChannelTestResult,
     CreditTransaction,
     DashboardData,
+    ModelClassificationApplyResult,
+    ModelClassificationSuggestion,
     ModelPayload,
     PageResult,
     Plan,
+    PublicSettings,
     PlanPayload,
     RedeemCode,
     RedeemGeneratePayload,
     RedeemGenerateResult,
     SettingItem,
+    UpstreamPriceSnapshot,
     VideoModel,
 } from "../types";
 import { apiDelete, apiDownload, apiGet, apiPost, apiPut } from "./http";
@@ -82,14 +86,29 @@ export const adminApi = {
     listModels() {
         return apiGet<VideoModel[]>("/admin/models");
     },
+    previewModelClassifications() {
+        return apiGet<ModelClassificationSuggestion[]>("/admin/models/classification-preview");
+    },
+    applyModelClassifications(items: ModelClassificationSuggestion[]) {
+        return apiPost<ModelClassificationApplyResult>("/admin/models/classification-apply", { items });
+    },
     createModel(payload: ModelPayload) {
         return apiPost<VideoModel>("/admin/models", payload);
     },
     updateModel(id: number, payload: ModelPayload) {
         return apiPut<VideoModel>(`/admin/models/${id}`, payload);
     },
+    updateModelPricing(id: number, pricingRules: string) {
+        return apiPut<VideoModel>(`/admin/models/${id}`, { pricingRules });
+    },
     deleteModel(id: number) {
         return apiDelete<void>(`/admin/models/${id}`);
+    },
+    listUpstreamPrices(channelId: number) {
+        return apiGet<UpstreamPriceSnapshot>("/admin/upstream-prices", { channelId });
+    },
+    syncUpstreamPrices(channelId: number) {
+        return apiPost<UpstreamPriceSnapshot>(`/admin/upstream-prices/sync?channelId=${channelId}`);
     },
 
     // ---------- 用户 ----------
@@ -162,7 +181,10 @@ export const adminApi = {
         return apiPost<void>(`/admin/tasks/${taskNo}/cancel`);
     },
 
-    // ---------- 设置 ----------
+    publicSettings() {
+        return apiGet<PublicSettings>("/public/settings");
+    },
+
     listSettings() {
         return apiGet<SettingItem[]>("/admin/settings");
     },

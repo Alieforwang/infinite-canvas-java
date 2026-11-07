@@ -48,6 +48,11 @@
         LIMIT 1
     </select>
 
+    <select id="selectByIdForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM channel WHERE id = #{id} FOR UPDATE
+    </select>
+
     <select id="selectAllSorted" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM channel
@@ -102,6 +107,12 @@
     </insert>
 
     <!-- 只更新非 null 字段（与 MyBatis-Plus updateById 行为一致） -->
+    <update id="updateTestResult">
+        UPDATE channel SET last_test_at = #{lastTestAt}, last_test_ok = #{lastTestOk},
+            last_test_message = #{lastTestMessage}
+        WHERE id = #{id}
+    </update>
+
     <update id="updateById">
         UPDATE channel
         <set>

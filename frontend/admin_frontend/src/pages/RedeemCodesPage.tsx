@@ -24,12 +24,13 @@ import { CopyButton } from "../components/CopyButton";
 import { PageHead } from "../components/PageHead";
 import { StatusTag } from "../components/StatusTag";
 import { useFeedback } from "../lib/feedback";
-import { formatCredits, formatDateTime, REDEEM_STATUS_META } from "../lib/format";
+import { useCurrency } from "../lib/currency";
+import { creditsToYuan, currencyText, formatCredits, formatDateTime, formatYuan, REDEEM_STATUS_META, yuanToCredits } from "../lib/format";
 import type { PageResult, Plan, RedeemCode, RedeemGenerateResult } from "../types";
 
 interface GenerateFormValues {
     count: number;
-    credits: number;
+    credits: string;
     planId?: number;
     prefix?: string;
     validDays: number;
@@ -57,6 +58,8 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
 
 export function RedeemCodesPage() {
     const { showApiError, showSuccess } = useFeedback();
+    const { exchangePerYuan, ready } = useCurrency();
+    const initialCreditInput = String(creditsToYuan(1000, exchangePerYuan) ?? 0);
     const [plans, setPlans] = useState<Plan[]>([]);
     const [data, setData] = useState<PageResult<RedeemCode> | null>(null);
     const [loading, setLoading] = useState(true);
@@ -70,8 +73,8 @@ export function RedeemCodesPage() {
     const [generateForm] = Form.useForm<GenerateFormValues>();
 
     useEffect(() => {
-        generateForm.setFieldsValue({ count: 10, credits: 1000, validDays: 7, prefix: "" });
-    }, [generateForm]);
+        generateForm.setFieldsValue({ count: 10, credits: initialCreditInput, validDays: 7, prefix: "" });
+    }, [generateForm, initialCreditInput]);
 
     useEffect(() => {
         adminApi
@@ -112,11 +115,23 @@ export function RedeemCodesPage() {
     };
 
     const handleGenerate = async (values: GenerateFormValues) => {
+        if (!ready) {
+            showApiError(new Error("金额设置尚未就绪，请稍后重试"));
+            return;
+        }
+        let credits: number;
+        try {
+            // An unchanged default may be a repeating yuan fraction at a nondecimal ratio.
+            credits = values.credits === initialCreditInput ? 1000 : yuanToCredits(values.credits, exchangePerYuan);
+        } catch (err) {
+            showApiError(err);
+            return;
+        }
         setGenerating(true);
         try {
             const result = await adminApi.generateRedeemCodes({
                 count: values.count,
-                credits: values.credits,
+                credits,
                 planId: values.planId ?? null,
                 prefix: values.prefix?.trim() ?? "",
                 validDays: values.validDays,
@@ -174,11 +189,11 @@ export function RedeemCodesPage() {
             render: (value: string) => <span className="mono">{value}</span>,
         },
         {
-            title: "积分",
+            title: "金额（元）",
             dataIndex: "credits",
             width: 100,
             align: "right",
-            render: (value: number) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number) => <span className="credits-value">{ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "金额未就绪"}</span>,
         },
         {
             title: "状态",
@@ -239,7 +254,7 @@ export function RedeemCodesPage() {
 
     const planOptions = plans.map((plan) => ({
         value: plan.id,
-        label: `${plan.name}（${formatCredits(plan.credits + plan.bonusCredits)} 积分${plan.enabled === 1 ? "" : "，已下架"}）`,
+        label: `${currencyText(plan.name, exchangePerYuan)}（${ready ? formatYuan(creditsToYuan(plan.credits + plan.bonusCredits, exchangePerYuan)) : "金额未就绪"}${plan.enabled === 1 ? "" : "，已下架"}）`,
     }));
 
     return (
@@ -278,21 +293,21 @@ export function RedeemCodesPage() {
                         </Col>
                         <Col xs={24} sm={12} lg={4}>
                             <Form.Item
-                                label="每码积分"
+                                label="每码余额（元）"
                                 name="credits"
                                 rules={[
-                                    { required: true, message: "请输入积分" },
+                                    { required: true, message: "请输入金额" },
                                     {
-                                        validator: async (_rule, value: number) => {
-                                            if (!value || value <= 0) {
-                                                return Promise.reject(new Error("积分必须大于 0"));
+                                        validator: async (_rule, value: string) => {
+                                            if (!value || !Number.isFinite(Number(value)) || Number(value) <= 0) {
+                                                return Promise.reject(new Error("金额必须大于 0"));
                                             }
                                             return Promise.resolve();
                                         },
                                     },
                                 ]}
                             >
-                                <InputNumber min={1} step={100} style={{ width: "100%" }} />
+                                <InputNumber<string> stringMode step="0.01" style={{ width: "100%" }} prefix="¥" />
                             </Form.Item>
                         </Col>
                         <Col xs={24} sm={12} lg={5}>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.infinitecanvas.mapper.UpstreamPriceMapper">
+    <resultMap id="priceMap" type="com.infinitecanvas.entity.UpstreamPrice">
+        <id column="channel_id" property="channelId"/>
+        <result column="upstream_model" property="upstreamModel"/>
+        <result column="quota_type" property="quotaType"/>
+        <result column="model_price" property="modelPrice"/>
+        <result column="group_ratio" property="groupRatio"/>
+        <result column="synced_at" property="syncedAt"/>
+    </resultMap>
+    <resultMap id="snapshotMap" type="com.infinitecanvas.mapper.UpstreamPriceMapper$Snapshot">
+        <constructor>
+            <arg column="channel_id" javaType="java.lang.Long"/>
+            <arg column="pricing_version" javaType="java.lang.String"/>
+            <arg column="synced_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+    <select id="selectSnapshot" resultMap="snapshotMap">
+        SELECT channel_id, pricing_version, synced_at FROM upstream_price_snapshot WHERE channel_id = #{channelId}
+    </select>
+    <select id="selectPrices" resultMap="priceMap">
+        SELECT channel_id, upstream_model, quota_type, model_price, group_ratio, synced_at
+        FROM upstream_price WHERE channel_id = #{channelId} ORDER BY upstream_model
+    </select>
+    <insert id="upsertSnapshot">
+        INSERT INTO upstream_price_snapshot (channel_id, pricing_version, synced_at)
+        VALUES (#{channelId}, #{version}, #{syncedAt})
+        ON DUPLICATE KEY UPDATE pricing_version = VALUES(pricing_version), synced_at = VALUES(synced_at)
+    </insert>
+    <delete id="deletePrices">DELETE FROM upstream_price WHERE channel_id = #{channelId}</delete>
+    <insert id="insertPrice">
+        INSERT INTO upstream_price (channel_id, upstream_model, quota_type, model_price, group_ratio, synced_at)
+        VALUES (#{channelId}, #{upstreamModel}, #{quotaType}, #{modelPrice}, #{groupRatio}, #{syncedAt})
+    </insert>
+</mapper>

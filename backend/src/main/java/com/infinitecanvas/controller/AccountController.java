@@ -59,7 +59,7 @@ public class AccountController {
                 account.getFrozen() == null ? 0 : account.getFrozen(),
                 account.getTotalConsumed() == null ? 0 : account.getTotalConsumed(),
                 account.getTotalRecharged() == null ? 0 : account.getTotalRecharged(),
-                settingService.getLong("credit.exchange_per_yuan", 100),
+                com.infinitecanvas.service.MoneyAmounts.unitsPerYuan(settingService),
                 settingService.getLong("task.max_concurrency_per_user", 2),
                 running, plan));
     }

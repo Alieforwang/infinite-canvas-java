@@ -1,6 +1,6 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { http } from "../src/api/http";
-import { getModelSpecs, listModels, quoteCredits, type VideoModelView } from "../src/api/models";
+import { DEFAULT_VIDEO_RATIOS, getModelRatios, getModelSpecs, listModels, quoteCredits, type VideoModelView } from "../src/api/models";
 import { getTask, cancelTask } from "../src/api/video-tasks";
 import { createImageTask } from "../src/api/image-tasks";
 
@@ -88,4 +88,12 @@ test("image retry preserves the caller idempotency key and uses the platform API
 test("image cancellation cannot accidentally call the video cancel endpoint", async () => {
     http.defaults.adapter = async () => { throw new Error("Unexpected network request"); };
     await expect(cancelTask("img_processing")).rejects.toThrow("暂不支持取消");
+});
+
+test("video ratios fall back to the common set when a model ships none", () => {
+    const base: VideoModelView = { ...imageModel, id: "video-empty", capability: "video", params: { ...imageModel.params, seconds: ["8"], ratios: [] } };
+    expect(getModelRatios(base)).toEqual(DEFAULT_VIDEO_RATIOS);
+    expect(getModelRatios({ ...base, params: { ...base.params, ratios: ["4:3"] } })).toEqual(["4:3"]);
+    expect(getModelRatios({ ...base, params: { ...base.params, ratios: [" 4:3 ", "4:3", ""] } })).toEqual(["4:3"]);
+    expect(getModelRatios(imageModel)).toEqual(["1:1"]);
 });

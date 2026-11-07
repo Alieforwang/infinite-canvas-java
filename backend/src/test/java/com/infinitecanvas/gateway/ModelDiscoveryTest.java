@@ -62,6 +62,7 @@ class ModelDiscoveryTest {
                 (proxy, method, args) -> method.getReturnType() == int.class ? 1 : null);
         client = new UpstreamClient(props, crypto, logs, new ObjectMapper(), new SsrfGuard(props));
         channel = new Channel();
+        channel.setId(1L);
         channel.setBaseUrl(origin);
         channel.setNormalizedBaseUrl(origin);
         channel.setAuthType("bearer");
@@ -70,6 +71,38 @@ class ModelDiscoveryTest {
 
     @AfterEach
     void stop() { server.stop(0); }
+
+    @Test
+    void syncRetainsExplicitOutputCapabilitiesWithoutTreatingVisionInputAsImageGeneration() {
+        replies.put("/v1/models", new Reply(200, """
+                {"data":[
+                  {"id":"opaque-image","type":"image-generation"},
+                  {"id":"opaque-chat","architecture":{"output_modalities":["text"],"input_modalities":["text","image"]}},
+                  {"id":"opaque-video","capabilities":["video"]},
+                  {"id":"multi-output","capabilities":["image","video"]},
+                  {"id":"gpt-4o","input_modalities":["text","image"]},
+                  {"id":"opaque-audio","output_modalities":["audio"]},
+                  {"id":"opaque-alias"}
+                ]}
+                """));
+        channel.setCapabilities("[\"llm\",\"image\",\"video\"]");
+        var channels = org.mockito.Mockito.mock(com.infinitecanvas.mapper.ChannelMapper.class);
+        org.mockito.Mockito.when(channels.selectById(1L)).thenReturn(channel);
+        org.mockito.Mockito.when(channels.selectByIdForUpdate(1L)).thenReturn(channel);
+        var models = org.mockito.Mockito.mock(com.infinitecanvas.mapper.VideoModelMapper.class);
+        var service = new com.infinitecanvas.service.ChannelService(channels, models, null, null, null,
+                new SsrfGuard(props), client, new ObjectMapper());
+
+        assertTrue(service.syncModels(1L, null).ok());
+
+        var imported = org.mockito.ArgumentCaptor.forClass(com.infinitecanvas.entity.VideoModel.class);
+        org.mockito.Mockito.verify(models, org.mockito.Mockito.times(7)).insert(imported.capture());
+        assertEquals(List.of("image", "llm", "video", "unknown", "llm", "unknown", "unknown"),
+                imported.getAllValues().stream().map(com.infinitecanvas.entity.VideoModel::getCapability).toList());
+        assertEquals(List.of(1, 1, 1, 0, 1, 0, 0),
+                imported.getAllValues().stream().map(com.infinitecanvas.entity.VideoModel::getEnabled).toList());
+        assertEquals(List.of("/v1/models"), paths);
+    }
 
     @Test
     void fallsBackOn404AndParsesAlternateCatalogStrictly() {
@@ -161,11 +194,12 @@ class ModelDiscoveryTest {
         com.infinitecanvas.mapper.ChannelMapper mapper = (com.infinitecanvas.mapper.ChannelMapper) Proxy.newProxyInstance(
                 getClass().getClassLoader(), new Class<?>[]{com.infinitecanvas.mapper.ChannelMapper.class},
                 (proxy, method, args) -> {
-                    if (method.getName().equals("selectById")) return channel;
+                    if (method.getName().equals("selectById") || method.getName().equals("selectByIdForUpdate")) return channel;
                     writes.add(method.getName());
                     return method.getReturnType() == int.class ? 1 : null;
                 });
-        var service = new com.infinitecanvas.service.ChannelService(mapper, null, null, null,
+        var models = org.mockito.Mockito.mock(com.infinitecanvas.mapper.VideoModelMapper.class);
+        var service = new com.infinitecanvas.service.ChannelService(mapper, models, null, null, null,
                 new SsrfGuard(props), client, new ObjectMapper());
         var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
                 new com.infinitecanvas.controller.AdminChannelController(service)).build();
@@ -181,8 +215,45 @@ class ModelDiscoveryTest {
         assertTrue(writes.isEmpty());
         assertEquals(List.of("/v1/models", "/custom"), paths);
         assertTrue(service.test(1L).ok());
-        assertEquals(List.of("updateById"), writes);
+        assertEquals(List.of("updateTestResult"), writes);
         assertEquals(Boolean.TRUE, channel.getLastTestOk());
+    }
+
+    @Test
+    void syncImportsRoutesIdempotently() throws Exception {
+        channel.setId(7L);
+        channel.setCapabilities("[\"video\"]");
+        com.infinitecanvas.mapper.ChannelMapper channels = (com.infinitecanvas.mapper.ChannelMapper) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{com.infinitecanvas.mapper.ChannelMapper.class},
+                (proxy, method, args) -> method.getName().equals("selectById")
+                        || method.getName().equals("selectByIdForUpdate") ? channel : null);
+        List<com.infinitecanvas.entity.VideoModel> inserted = new ArrayList<>();
+        com.infinitecanvas.mapper.VideoModelMapper models = (com.infinitecanvas.mapper.VideoModelMapper) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{com.infinitecanvas.mapper.VideoModelMapper.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("selectByChannelAndUpstream")) {
+                        String name = (String) args[1];
+                        return inserted.stream().filter(item -> item.getUpstreamModel().equals(name)).findFirst().orElse(null);
+                    }
+                    if (method.getName().equals("insert")) {
+                        inserted.add((com.infinitecanvas.entity.VideoModel) args[0]);
+                        return 1;
+                    }
+                    return method.getReturnType() == int.class ? 0 : null;
+                });
+        var service = new com.infinitecanvas.service.ChannelService(channels, models, null, null, null,
+                new SsrfGuard(props), client, new ObjectMapper());
+        replies.put("/v1/models", new Reply(200, "{\"data\":[{\"id\":\"sora-v2\"}]}"));
+
+        var first = service.syncModels(7L, null);
+        var second = service.syncModels(7L, null);
+
+        assertTrue(first.ok());
+        assertTrue(second.ok());
+        assertEquals(1, inserted.size());
+        assertEquals("sora-v2", inserted.get(0).getModelKey());
+        assertEquals("video", inserted.get(0).getCapability());
+        assertEquals(1, inserted.get(0).getEnabled());
     }
 
     @Test

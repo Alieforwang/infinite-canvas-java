@@ -1,26 +1,30 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Button, Input, Modal, Tooltip } from "antd";
-import { ArrowLeft, Copy, FolderOpen, Image as ImageIcon, Keyboard, LoaderCircle, PanelLeft, Pencil, Plus, Redo2, Sparkles, Trash2, Undo2, Video } from "lucide-react";
+import { ArrowLeft, ClipboardPaste, Copy, CopyPlus, Download, FolderInput, FolderOpen, Image as ImageIcon, Keyboard, LoaderCircle, PanelLeft, Pencil, Plus, Redo2, Sparkles, Trash2, Undo2, Video } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { getProject, updateProject, type CanvasDocument, type CanvasNode } from "@/api/canvas";
+import { getProject, listProjects, updateProject, type CanvasDocument, type CanvasNode, type ProjectSummary } from "@/api/canvas";
 import { signedUrlOf, uploadFile } from "@/api/files";
-import { getModelSpecs, listModels, quoteCredits, type VideoModelView } from "@/api/models";
+import { getModelRatios, getModelSpecs, listModels, quoteCredits, type VideoModelView } from "@/api/models";
 import { createImageTask, getImageTask } from "@/api/image-tasks";
 import { createTask, getTask, type VideoTaskView } from "@/api/video-tasks";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useVideoTaskStore } from "@/stores/use-video-task-store";
 import { AssetPickerModal } from "@/components/works/asset-picker-modal";
-import { transferItemsToNodes, type CanvasTransferItem } from "@/lib/canvas-transfer";
+import { applyGeneratedResult, transferItemsToNodes, type CanvasTransferItem } from "@/lib/canvas-transfer";
 import { isTaskActive } from "@/lib/video-task-state";
 import { cn } from "@/lib/utils";
+import { currencyText } from "@/lib/currency";
 import { CanvasWorkbenchSidebar } from "@/components/canvas/workbench-sidebar";
 import { CanvasWorkbenchNavigation } from "@/components/canvas/workbench-navigation";
 import { CanvasCreationMenu, CanvasCreationRail, CanvasWorkbenchTools } from "@/components/canvas/workbench-tools";
+import { CanvasContextMenu, type CanvasContextMenuEntry } from "@/components/canvas/canvas-menu";
 import { CanvasGenerationComposer } from "@/components/canvas/generation-composer";
 import { cloneNodes, fitViewport, getNodesBounds, selectIntersectingNodes, type Rect } from "@/lib/canvas-editing";
 import { createDocumentHistory, commitDocumentHistory, undoDocumentHistory, redoDocumentHistory } from "@/lib/canvas-document-history";
 import { appendCanvasLink, cloneCanvasLinks, getCanvasLinks, isCanvasLink, pruneCanvasLinks } from "@/lib/canvas-links";
+import { buildReferenceAwarePrompt } from "@/lib/canvas/mention-references";
+import { resolveVideoSize } from "@/lib/video-size";
 import { EditorConnections, type ConnectionDraft } from "@/components/canvas/editor-connections";
 
 const NODE_SIZE = {
@@ -48,6 +52,7 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
     const [pickerOpen, setPickerOpen] = useState(false);
     const pickingForGeneration = useRef(false);
     const [creationMenu, setCreationMenu] = useState<{ x: number; y: number; world: { x: number; y: number } } | null>(null);
+    const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; world: { x: number; y: number }; nodeIds: string[] } | null>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; point: { x: number; y: number } } | null>(null);
     const [uploadingIds, setUploadingIds] = useState<string[]>([]);
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -260,7 +265,8 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
             setResolution(spec.resolution);
             setSeconds(spec.seconds ?? 0);
         }
-        setRatio((current) => (model.params.ratios.includes(current) ? current : (model.params.ratios[0] ?? "1:1")));
+        const ratioOptions = getModelRatios(model);
+        setRatio((current) => (ratioOptions.includes(current) ? current : (ratioOptions[0] ?? "16:9")));
         setReferenceMode((current) => (outputType === "image" ? "reference" : current === "reference" && model.params.supportsReferenceImages ? "reference" : model.params.supportsFirstLastFrame ? "frames" : "reference"));
     }, [model, outputType, resolution, seconds]);
 
@@ -284,7 +290,7 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                     versionRef.current = updated.version;
                     if (saveRevisionRef.current === revision) setStatus("saved");
                     if (useAuthStore.getState().user?.id === userId) {
-                        markInserted(document.nodes.filter((node) => node.id.startsWith("task-")).map((node) => node.id.slice(5)));
+                        markInserted(document.nodes.flatMap((node) => node.taskNo ? [node.taskNo] : node.id.startsWith("task-") ? [node.id.slice(5)] : []));
                     }
                 } catch {
                     setStatus("error");
@@ -361,23 +367,28 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
         if (!loaded || !projectNo) return;
         const completed = Object.values(tasks).filter((task) => task.status === "succeeded" && task.file && origins[task.taskNo]?.projectNo === projectNo && !origins[task.taskNo]?.resultInserted && !insertedThisVisit.current.has(task.taskNo));
         if (!completed.length) return;
-        const existing = new Set(nodesRef.current.map((node) => node.id));
         completed.forEach((task) => insertedThisVisit.current.add(task.taskNo));
         const center = worldCenter();
-        const additions = transferItemsToNodes(
-            completed.map((task) => ({
-                kind: task.params.capability === "image" ? "image" : "video",
+        let nextNodes = nodesRef.current;
+        const results: CanvasNode[] = [];
+        for (const task of completed) {
+            const applied = applyGeneratedResult(nextNodes, {
+                kind: task.params.capability === "image" || task.taskNo.startsWith("img_") ? "image" : "video",
                 title: task.prompt.slice(0, 40),
                 fileNo: task.file!.fileNo,
                 taskNo: task.taskNo,
-            })),
-            { x: Math.round(center.x - 160), y: Math.round(center.y - 120) },
-        ).filter((node) => !existing.has(node.id));
-        additions.forEach((node) => void resolveMedia(node));
-        if (additions.length) {
-            changeNodes((current) => [...current, ...additions.filter((node) => !current.some((existingNode) => existingNode.id === node.id))]);
-            setSelected(additions.map((node) => node.id));
-            message.success(`${additions.length} 个生成结果已插入画布`);
+            }, origins[task.taskNo]?.targetNodeId, {
+                x: Math.round(center.x - 160) + (results.length % 3) * 360,
+                y: Math.round(center.y - 120) + Math.floor(results.length / 3) * 300,
+            });
+            nextNodes = applied.nodes;
+            if (applied.resultNode) results.push(applied.resultNode);
+        }
+        results.forEach((node) => void resolveMedia(node));
+        if (results.length) {
+            changeNodes(nextNodes);
+            setSelected(results.map((node) => node.id));
+            message.success(`${results.length} 个生成结果已更新到画布`);
         }
         // Only task snapshots trigger insertion; deleting a node is an intentional edit.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -477,10 +488,16 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
         clipboardRef.current = structuredClone({ nodes: source, connections: getCanvasLinks(connectionsRef.current, source) });
         if (source.length) message.success(`已复制 ${source.length} 个节点，可按 Ctrl/⌘+V 粘贴`);
     };
-    const pasteNodes = (duplicate = false) => {
+    const pasteNodes = (duplicate = false, point?: { x: number; y: number }) => {
         const source = duplicate ? nodesRef.current.filter((node) => selectedRef.current.includes(node.id)) : clipboardRef.current.nodes;
         if (!source.length) return;
-        const additions = cloneNodes(source);
+        let additions = cloneNodes(source);
+        const bounds = point ? getNodesBounds(additions) : null;
+        if (point && bounds) {
+            const dx = point.x - bounds.x;
+            const dy = point.y - bounds.y;
+            additions = additions.map((node) => ({ ...node, x: node.x + dx, y: node.y + dy }));
+        }
         const sourceConnections = duplicate ? connectionsRef.current : clipboardRef.current.connections;
         const links = cloneCanvasLinks(sourceConnections, source, additions);
         changeDocument([...nodesRef.current, ...additions], [...connectionsRef.current, ...links]);
@@ -490,6 +507,75 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
     };
     const focusNodes = (items: CanvasNode[]) => {
         if (items.length) setViewport(fitViewport(items, size, 100));
+    };
+
+    const downloadNodes = async (ids: string[]) => {
+        const targets = nodesRef.current.filter((node) => ids.includes(node.id) && node.fileNo && (node.type === "image" || node.type === "video"));
+        if (!targets.length) {
+            message.warning("该节点没有可下载的文件");
+            return;
+        }
+        for (const node of targets) {
+            let url: string | undefined;
+            try {
+                url = media[node.fileNo!] ?? (await signedUrlOf(node.fileNo!));
+                const blob = await fetch(url).then((response) => response.blob());
+                const fallback = node.type === "image" ? "png" : "mp4";
+                const extension = (blob.type.split("/")[1] || fallback).replace("jpeg", "jpg");
+                const objectUrl = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = objectUrl;
+                anchor.download = `${node.title || (node.type === "image" ? "图片" : "视频")}.${extension}`;
+                anchor.click();
+                window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            } catch {
+                // Cross-origin storage may block blob downloads; fall back to the signed URL.
+                if (url) window.open(url, "_blank", "noopener");
+                else message.error("下载失败，请稍后重试");
+            }
+        }
+    };
+
+    const saveNodesToProject = async (target: ProjectSummary, ids: string[]) => {
+        const source = nodesRef.current.filter((node) => ids.includes(node.id));
+        if (!source.length) return;
+        try {
+            const detail = await getProject(target.projectNo);
+            const viewport = detail.document.viewport ?? { x: 0, y: 0, k: 1 };
+            const scale = viewport.k || 1;
+            const center = { x: (600 - viewport.x) / scale, y: (400 - viewport.y) / scale };
+            const bounds = getNodesBounds(source);
+            if (!bounds) return;
+            const dx = center.x - (bounds.x + bounds.width / 2);
+            const dy = center.y - (bounds.y + bounds.height / 2);
+            const copies = cloneNodes(source).map((node) => ({ ...node, x: node.x + dx, y: node.y + dy }));
+            const links = cloneCanvasLinks(getCanvasLinks(connectionsRef.current, source), source, copies);
+            await updateProject(detail.projectNo, detail.version, detail.title, {
+                ...detail.document,
+                nodes: [...(detail.document.nodes ?? []), ...copies],
+                connections: [...(detail.document.connections ?? []), ...links],
+            });
+            message.success(`已保存到画布「${detail.title || "未命名画布"}」`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存到其他画布失败");
+        }
+    };
+
+    const loadOtherCanvasEntries = async (ids: string[]): Promise<CanvasContextMenuEntry[]> => {
+        try {
+            const projects = await listProjects();
+            const others = projects.filter((project) => project.projectNo !== projectNo);
+            if (!others.length) return [{ type: "item", id: "no-other-canvas", label: "暂无其他画布", disabled: true }];
+            return others.map((project) => ({
+                type: "item",
+                id: project.projectNo,
+                label: project.title || "未命名画布",
+                icon: <FolderInput className="size-4" />,
+                onSelect: () => void saveNodesToProject(project, ids),
+            }));
+        } catch {
+            return [{ type: "item", id: "other-canvas-failed", label: "画布列表加载失败", disabled: true }];
+        }
     };
 
     useEffect(() => {
@@ -757,15 +843,21 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
         if (modelsStatus !== "ready" || !model || model.capability !== outputType) return message.error("请选择当前输出类型的可用模型");
         if (!prompt.trim()) return message.error("请输入提示词");
         if (!getModelSpecs(model).some((spec) => spec.resolution === resolution && (outputType === "image" || spec.seconds === seconds))) return message.warning("请重新选择当前模型支持的规格组合");
-        if (outputType === "video" && !model.params.ratios.includes(ratio)) return message.warning("请选择当前模型支持的画面比例");
+        if (outputType === "video" && !getModelRatios(model).includes(ratio)) return message.warning("请选择当前模型支持的画面比例");
         if (selectedImages.length > model.params.maxReferenceImages) return message.warning(`该模型最多支持 ${model.params.maxReferenceImages} 张参考图`);
         if (selectedImages.length && referenceMode === "frames" && (!model.params.supportsFirstLastFrame || selectedImages.length > 2)) return message.warning("当前首尾帧模式不支持这些参考图，请调整模式或素材");
         if (selectedImages.length && referenceMode === "reference" && !model.params.supportsReferenceImages) return message.warning("当前模型不支持图片参考模式");
-        if (credits.available < estimate) return message.warning("可用积分不足，请先到账户中心补充积分，当前草稿会保留");
+        if (credits.available < estimate) return message.warning("可用余额不足，请先到账户中心充值，当前草稿会保留");
+        const targetNode = nodeGenOpen && generationAnchorIds.length === 1
+            ? nodesRef.current.find((node) => node.id === generationAnchorIds[0] && node.type === outputType && !node.fileNo && !node.storageKey && !node.content)
+            : undefined;
+        const origin = { projectNo, projectTitle: title, targetNodeId: targetNode?.id };
+        // Mentionable image titles are mapped to the attachment order so "@name" stays meaningful.
+        const effectivePrompt = buildReferenceAwarePrompt(prompt, selectedImages);
         setGenerating(true);
         try {
             if (outputType === "image") {
-                const input = { modelKey: model.id, prompt: prompt.trim(), size: resolution, referenceFileNos: selectedImages.map((node) => node.fileNo!) };
+                const input = { modelKey: model.id, prompt: effectivePrompt, size: resolution, referenceFileNos: selectedImages.map((node) => node.fileNo!) };
                 const payload = JSON.stringify(input);
                 if (imageRequestRef.current?.payload !== payload) imageRequestRef.current = { payload, key: crypto.randomUUID() };
                 try {
@@ -776,7 +868,7 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                 const task = await createImageTask(input, imageRequestRef.current!.key);
                 if (userId !== useAuthStore.getState().user?.id) return;
                 setGenTaskNo(task.taskNo);
-                track(task, { projectNo, projectTitle: title });
+                track(task, useVideoTaskStore.getState().origins[task.taskNo] ?? origin);
                 if (isTaskActive(task)) message.success("图片任务已提交，完成后自动插入画布");
                 else {
                     imageRequestRef.current = null;
@@ -785,17 +877,19 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                     } catch {
                         /* Optional draft persistence. */
                     }
-                    if (task.status !== "succeeded" || !task.file) message.error(task.errorMessage || "图片生成失败，请重试");
+                    if (task.status !== "succeeded" || !task.file) message.error(currencyText(task.errorMessage) || "图片生成失败，请重试");
                     else message.success("图片已生成，正在插入画布");
                 }
                 return;
             }
             const created = await createTask({
                 modelKey: model.id,
-                prompt: prompt.trim(),
+                prompt: effectivePrompt,
                 seconds,
                 resolution,
-                size: model.params.sizes[0] || "1280x720",
+                // Derive the size from the chosen ratio so an imported model's default
+                // 1280x720 entry cannot silently defeat a 9:16 / 1:1 selection.
+                size: resolveVideoSize(model, ratio, resolution),
                 ratio,
                 generateAudio: false,
                 watermark: false,
@@ -808,14 +902,14 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                 status: created.status,
                 progress: 0,
                 modelName: model.displayName,
-                prompt: prompt.trim(),
-                params: { seconds, resolution, ratio },
+                prompt: effectivePrompt,
+                params: { seconds, resolution, ratio, capability: "video" },
                 referenceFileNos: selectedImages.map((node) => node.fileNo!),
                 heldCredits: created.heldCredits,
                 settledCredits: 0,
                 createdAt: new Date().toISOString(),
             };
-            track(task, { projectNo, projectTitle: title });
+            track(task, useVideoTaskStore.getState().origins[task.taskNo] ?? origin);
             setGenTaskNo(task.taskNo);
             message.success("任务已提交，可关闭窗口继续编辑，完成后会自动插入本画布");
         } catch (error) {
@@ -835,7 +929,7 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
               top: Math.max(8, Math.min(size.height - 110, selectionBounds.y * viewport.k + viewport.y - 70)),
           }
         : {};
-    const panelWidth = Math.min(500, Math.max(240, size.width - 88));
+    const panelWidth = Math.min(560, Math.max(240, size.width - 88));
     const anchorTop = sourceBounds ? sourceBounds.y * viewport.k + viewport.y : 24;
     const belowNode = sourceBounds ? (sourceBounds.y + sourceBounds.height) * viewport.k + viewport.y + 18 : 24;
     const nodePanelStyle = {
@@ -860,7 +954,8 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
         const spec = specs.find((item) => item.resolution === resolution && (outputType === "image" || item.seconds === seconds)) ?? specs[0];
         setResolution(spec?.resolution ?? "");
         setSeconds(spec?.seconds ?? 0);
-        setRatio((current) => (next.params.ratios.includes(current) ? current : (next.params.ratios[0] ?? "16:9")));
+        const ratioOptions = getModelRatios(next);
+        setRatio((current) => (ratioOptions.includes(current) ? current : (ratioOptions[0] ?? "16:9")));
         setReferenceMode((current) => (current === "reference" && next.params.supportsReferenceImages ? "reference" : next.params.supportsFirstLastFrame ? "frames" : "reference"));
     };
     const composerProps = {
@@ -910,6 +1005,28 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
         onRecharge: () => navigate(`/account?returnTo=${encodeURIComponent(`/canvas/${projectNo}`)}`),
     };
     const generationForm = <CanvasGenerationComposer {...composerProps} />;
+    // Node right-click menu mirrors Jimeng: clipboard, cross-canvas move, download, history, delete.
+    const nodeMenuItems: CanvasContextMenuEntry[] = nodeMenu
+        ? [
+              { type: "item", id: "copy", label: "复制", icon: <Copy className="size-4" />, shortcut: "Ctrl+C", onSelect: copySelected },
+              { type: "item", id: "duplicate", label: "复制副本", icon: <CopyPlus className="size-4" />, shortcut: "Ctrl+D", onSelect: () => pasteNodes(true) },
+              { type: "item", id: "paste", label: "粘贴", icon: <ClipboardPaste className="size-4" />, shortcut: "Ctrl+V", disabled: !clipboardRef.current.nodes.length, onSelect: () => pasteNodes(false, nodeMenu.world) },
+              { type: "separator" },
+              { type: "item", id: "save-to", label: "保存到其他画布", icon: <FolderInput className="size-4" />, loadChildren: () => loadOtherCanvasEntries(nodeMenu.nodeIds) },
+              {
+                  type: "item",
+                  id: "download",
+                  label: "下载",
+                  icon: <Download className="size-4" />,
+                  disabled: !nodeMenu.nodeIds.some((id) => nodesRef.current.some((node) => node.id === id && node.fileNo && (node.type === "image" || node.type === "video"))),
+                  onSelect: () => void downloadNodes(nodeMenu.nodeIds),
+              },
+              { type: "separator" },
+              { type: "item", id: "redo", label: "重做", icon: <Redo2 className="size-4" />, shortcut: "Ctrl+Shift+Z", disabled: !historyRef.current.future.length, onSelect: () => travelHistory("redo") },
+              { type: "item", id: "undo", label: "撤销", icon: <Undo2 className="size-4" />, shortcut: "Ctrl+Z", disabled: !historyRef.current.past.length, onSelect: () => travelHistory("undo") },
+              { type: "item", id: "delete", label: "删除", icon: <Trash2 className="size-4" />, shortcut: "Del", danger: true, onSelect: removeSelected },
+          ]
+        : [];
     if (loading) {
         return (
             <div className="flex h-full items-center justify-center gap-2 text-sm text-stone-500">
@@ -982,6 +1099,7 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                         if ((event.target as HTMLElement).dataset.canvasBg !== "true") return;
                         event.preventDefault();
                         finishGesture();
+                        setNodeMenu(null);
                         setCreationMenu({ x: event.clientX, y: event.clientY, world: worldPoint(event.clientX, event.clientY) });
                     }}
                     onPointerDown={onBackgroundPointerDown}
@@ -1036,6 +1154,15 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                                 )}
                                 style={{ left: node.x, top: node.y, width: node.width, height: node.height, zIndex: selected.includes(node.id) ? 1 : 0 }}
                                 onPointerDown={(event) => startDrag(event, node)}
+                                onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    finishGesture();
+                                    const ids = selectedRef.current.includes(node.id) ? selectedRef.current : [node.id];
+                                    setSelected(ids);
+                                    setCreationMenu(null);
+                                    setNodeMenu({ x: event.clientX, y: event.clientY, world: worldPoint(event.clientX, event.clientY), nodeIds: ids });
+                                }}
                                 onDoubleClick={() => {
                                     if (node.type === "text") {
                                         setEditingText(node);
@@ -1206,6 +1333,23 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                             onCreate={(type) => addNode(type, {}, creationMenu.world)}
                             onUpload={(type) => requestUpload(type, undefined, creationMenu.world)}
                             onOpenLibrary={() => setPickerOpen(true)}
+                            canPaste={clipboardRef.current.nodes.length > 0}
+                            canUndo={historyRef.current.past.length > 0}
+                            canRedo={historyRef.current.future.length > 0}
+                            onPaste={() => pasteNodes(false, creationMenu.world)}
+                            onUndo={() => travelHistory("undo")}
+                            onRedo={() => travelHistory("redo")}
+                        />
+                    ) : null}
+                    {nodeMenu ? (
+                        <CanvasContextMenu
+                            position={nodeMenu}
+                            items={nodeMenuItems}
+                            ariaLabel="节点菜单"
+                            onClose={() => {
+                                setNodeMenu(null);
+                                containerRef.current?.focus({ preventScroll: true });
+                            }}
                         />
                     ) : null}
                     {nodes.length === 0 ? (
@@ -1294,6 +1438,8 @@ function CanvasEditor({ projectNo }: { projectNo?: string }) {
                     <dd>选择工具拖动 / Shift+拖动</dd>
                     <dt>追加或取消选择</dt>
                     <dd>Shift+点击节点</dd>
+                    <dt>右键菜单</dt>
+                    <dd>空白处添加节点 · 节点上复制/保存到其他画布/下载/删除</dd>
                     <dt>聚焦所选或全部</dt>
                     <dd>F</dd>
                     <dt>删除 / 取消选择</dt>

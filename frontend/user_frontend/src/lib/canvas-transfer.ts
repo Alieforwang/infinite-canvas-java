@@ -46,8 +46,26 @@ export function transferItemsToNodes(items: CanvasTransferItem[], position = { x
             y: position.y + Math.floor(index / 3) * 300,
             width: 320,
             height: item.kind === "text" ? 220 : 240,
+            ...(item.taskNo ? { taskNo: item.taskNo } : {}),
             ...(item.kind === "text" ? { content: item.textContent } : { fileNo: item.fileNo }),
         });
     }
     return nodes;
+}
+
+/** Use the target captured at submission, never the selection at completion. */
+export function applyGeneratedResult(
+    nodes: CanvasNode[],
+    item: CanvasTransferItem,
+    targetNodeId?: string,
+    position = { x: 80, y: 80 },
+): { nodes: CanvasNode[]; resultNode?: CanvasNode } {
+    if (item.taskNo && nodes.some((node) => node.taskNo === item.taskNo || node.id === `task-${item.taskNo}`)) return { nodes };
+    const target = nodes.find((node) => node.id === targetNodeId);
+    if (target && target.type === item.kind && item.kind !== "text" && item.fileNo && !target.fileNo && !target.storageKey && !target.content) {
+        const resultNode = { ...target, title: item.title, fileNo: item.fileNo, storageKey: `file:${item.fileNo}`, taskNo: item.taskNo };
+        return { nodes: nodes.map((node) => node.id === target.id ? resultNode : node), resultNode };
+    }
+    const [resultNode] = transferItemsToNodes([item], position);
+    return resultNode ? { nodes: [...nodes, resultNode], resultNode } : { nodes };
 }

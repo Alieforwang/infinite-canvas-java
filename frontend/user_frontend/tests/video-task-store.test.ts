@@ -127,6 +127,16 @@ describe("canvas task persistence", () => {
         expect(useVideoTaskStore.getState().origins[completed.taskNo]?.resultInserted).toBe(true);
     });
 
+    test("restores the generation target node after restarting task tracking", async () => {
+        const task = completedTask("img_target");
+        const origin = { projectNo: "project-1", targetNodeId: "empty-image" };
+        const stop = await startStore(userA.id);
+        useVideoTaskStore.getState().track(task, origin);
+        stop();
+        await startStore(userA.id);
+        expect(useVideoTaskStore.getState().origins[task.taskNo]).toEqual({ ...origin, resultInserted: false });
+    });
+
     test("does not persist an ordinary completed video task without canvas provenance", async () => {
         const completed = completedTask("ordinary-video");
         const stop = await startStore(userA.id);

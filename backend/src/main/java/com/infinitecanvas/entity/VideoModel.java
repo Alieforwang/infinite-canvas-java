@@ -31,6 +31,15 @@ public class VideoModel {
     private Integer supportsReferenceImages;
     private Integer maxReferenceImages;
     private String extraRequestParams;
+    // ---- Phase 1: 成本感知路由 ----
+    /** 从 upstream_price 同步来的上游单位成本（人民币内部记账单位），quota_type=1 为按次、2 为按秒 */
+    private BigDecimal costPerUnit;
+    /** 上游计费类型：0=token, 1=按次, 2=按秒 */
+    private Integer costQuotaType;
+    /** 成本同步时间 */
+    private LocalDateTime costSyncedAt;
+    /** 当前并发数，用于负载均衡 */
+    private Integer currentLoad;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -21,7 +21,8 @@ import { adminApi } from "../api/admin";
 import { PageHead } from "../components/PageHead";
 import { StatusTag } from "../components/StatusTag";
 import { useFeedback } from "../lib/feedback";
-import { formatCredits, formatDateTime, USER_STATUS_META } from "../lib/format";
+import { useCurrency } from "../lib/currency";
+import { creditsToYuan, currencyText, formatCredits, formatDateTime, formatYuan, USER_STATUS_META, yuanToCredits } from "../lib/format";
 import type { AdminUser, CreditTransaction, PageResult, Plan } from "../types";
 
 interface UserQueryState {
@@ -36,12 +37,12 @@ interface StatusFormValues {
 }
 
 interface AdjustFormValues {
-    amount: number;
+    amount: string;
     reason: string;
 }
 
 interface RechargeFormValues {
-    amount: number;
+    amount: string;
     remark?: string;
 }
 
@@ -52,11 +53,12 @@ interface PlanFormValues {
 
 const DEFAULT_PAGE_SIZE = 10;
 
-function deltaText(value: number | null): string {
+function deltaText(value: number | null, exchangePerYuan: number): string {
     if (value === null || value === undefined) {
         return "-";
     }
-    return value > 0 ? `+${formatCredits(value)}` : formatCredits(value);
+    const text = formatYuan(creditsToYuan(value, exchangePerYuan));
+    return value > 0 ? `+${text}` : text;
 }
 
 function deltaColor(value: number | null): string {
@@ -68,6 +70,9 @@ function deltaColor(value: number | null): string {
 
 export function UsersPage() {
     const { showApiError, showSuccess } = useFeedback();
+    const { exchangePerYuan, ready } = useCurrency();
+    const initialAmount = String(creditsToYuan(100, exchangePerYuan) ?? 0);
+    const amountText = (value: number | null) => ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "金额未就绪";
     const [keywordInput, setKeywordInput] = useState("");
     const [statusInput, setStatusInput] = useState<string | undefined>(undefined);
     const [query, setQuery] = useState<UserQueryState>({ keyword: "", page: 1, pageSize: DEFAULT_PAGE_SIZE });
@@ -165,7 +170,7 @@ export function UsersPage() {
 
     const openAdjustModal = (user: AdminUser) => {
         adjustForm.resetFields();
-        adjustForm.setFieldsValue({ amount: 100, reason: "" });
+        adjustForm.setFieldsValue({ amount: initialAmount, reason: "" });
         setAdjustTarget(user);
     };
 
@@ -179,10 +184,22 @@ export function UsersPage() {
         } catch {
             return;
         }
+        if (!ready) {
+            showApiError(new Error("金额设置尚未就绪，请稍后重试"));
+            return;
+        }
+        let amount: number;
+        try {
+            // Preserve the known original amount when its yuan fraction repeats (for example, rate 3).
+            amount = values.amount === initialAmount ? 100 : yuanToCredits(values.amount, exchangePerYuan);
+        } catch (err) {
+            showApiError(err);
+            return;
+        }
         setSubmitting(true);
         try {
-            await adminApi.adjustUserCredits(adjustTarget.id, values.amount, values.reason.trim());
-            showSuccess("积分调整成功");
+            await adminApi.adjustUserCredits(adjustTarget.id, amount, values.reason.trim());
+            showSuccess("余额调整成功");
             setAdjustTarget(null);
             await load();
             if (detailTarget && detailTarget.id === adjustTarget.id) {
@@ -197,7 +214,7 @@ export function UsersPage() {
 
     const openRechargeModal = (user: AdminUser) => {
         rechargeForm.resetFields();
-        rechargeForm.setFieldsValue({ amount: 100, remark: "" });
+        rechargeForm.setFieldsValue({ amount: initialAmount, remark: "" });
         setRechargeTarget(user);
     };
 
@@ -211,9 +228,21 @@ export function UsersPage() {
         } catch {
             return;
         }
+        if (!ready) {
+            showApiError(new Error("金额设置尚未就绪，请稍后重试"));
+            return;
+        }
+        let amount: number;
+        try {
+            // Preserve the known original amount when its yuan fraction repeats (for example, rate 3).
+            amount = values.amount === initialAmount ? 100 : yuanToCredits(values.amount, exchangePerYuan);
+        } catch (err) {
+            showApiError(err);
+            return;
+        }
         setSubmitting(true);
         try {
-            await adminApi.rechargeUser(rechargeTarget.id, values.amount, values.remark?.trim() ?? "");
+            await adminApi.rechargeUser(rechargeTarget.id, amount, values.remark?.trim() ?? "");
             showSuccess("充值成功");
             setRechargeTarget(null);
             await load();
@@ -296,18 +325,18 @@ export function UsersPage() {
             render: (value: string) => <StatusTag meta={USER_STATUS_META[value]} fallback={value} />,
         },
         {
-            title: "可用积分",
+            title: "可用余额（元）",
             dataIndex: "available",
             width: 110,
             align: "right",
-            render: (value: number) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number) => <span className="credits-value">{amountText(value)}</span>,
         },
         {
-            title: "累计消耗",
+            title: "累计消耗（元）",
             dataIndex: "totalConsumed",
             width: 110,
             align: "right",
-            render: (value: number) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number) => <span className="credits-value">{amountText(value)}</span>,
         },
         {
             title: "任务数",
@@ -333,7 +362,7 @@ export function UsersPage() {
                         详情
                     </Button>
                     <Button type="link" size="small" icon={<HandCoins size={14} />} onClick={() => openAdjustModal(record)}>
-                        调积分
+                        调余额
                     </Button>
                     <Button type="link" size="small" icon={<Wallet size={14} />} onClick={() => openRechargeModal(record)}>
                         充值
@@ -359,33 +388,33 @@ export function UsersPage() {
         { title: "时间", dataIndex: "createdAt", width: 170, render: (value: string) => <span className="mono">{formatDateTime(value)}</span> },
         { title: "业务类型", dataIndex: "bizType", width: 150, render: (value: string) => <Tag>{value}</Tag> },
         {
-            title: "可用变动",
+            title: "可用变动（元）",
             dataIndex: "availableDelta",
             width: 110,
             align: "right",
-            render: (value: number | null) => <span style={{ color: deltaColor(value) }}>{deltaText(value)}</span>,
+            render: (value: number | null) => <span style={{ color: deltaColor(value) }}>{ready ? deltaText(value, exchangePerYuan) : "金额未就绪"}</span>,
         },
         {
-            title: "冻结变动",
+            title: "冻结变动（元）",
             dataIndex: "frozenDelta",
             width: 110,
             align: "right",
-            render: (value: number | null) => <span style={{ color: deltaColor(value) }}>{deltaText(value)}</span>,
+            render: (value: number | null) => <span style={{ color: deltaColor(value) }}>{ready ? deltaText(value, exchangePerYuan) : "金额未就绪"}</span>,
         },
         {
-            title: "变动后余额",
+            title: "变动后余额（元）",
             dataIndex: "balanceAfter",
             width: 110,
             align: "right",
-            render: (value: number | null) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number | null) => <span className="credits-value">{amountText(value)}</span>,
         },
-        { title: "备注", dataIndex: "remark", ellipsis: true, width: 220, render: (value: string) => value || "-" },
+        { title: "备注", dataIndex: "remark", ellipsis: true, width: 220, render: (value: string) => currencyText(value, exchangePerYuan) || "-" },
     ];
 
     const planOptions = plans.map((plan) => ({
         value: plan.id,
         disabled: plan.enabled !== 1,
-        label: `${plan.name}（${formatCredits(plan.credits)}+${formatCredits(plan.bonusCredits)} 积分${plan.enabled === 1 ? "" : "，已下架"}）`,
+        label: `${currencyText(plan.name, exchangePerYuan)}（${formatYuan(creditsToYuan(plan.credits, exchangePerYuan))}+${formatYuan(creditsToYuan(plan.bonusCredits, exchangePerYuan))}${plan.enabled === 1 ? "" : "，已下架"}）`,
     }));
 
     const detailTransactionTable = (
@@ -397,7 +426,7 @@ export function UsersPage() {
             dataSource={transactions}
             pagination={false}
             scroll={{ x: 870 }}
-            locale={{ emptyText: "暂无积分流水" }}
+            locale={{ emptyText: "暂无余额流水" }}
         />
     );
 
@@ -405,7 +434,7 @@ export function UsersPage() {
         <>
             <PageHead
                 title="用户管理"
-                description="查询用户、调整积分、手工充值、开通套餐与启用/禁用账号。"
+                description="查询用户、调整余额、手工充值、开通套餐与启用/禁用账号。"
                 extra={
                     <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>
                         刷新
@@ -502,9 +531,9 @@ export function UsersPage() {
                 </Form>
             </Modal>
 
-            {/* 调积分 */}
+            {/* 调余额 */}
             <Modal
-                title={adjustTarget ? `调整积分 · ${adjustTarget.email}` : "调整积分"}
+                title={adjustTarget ? `调整余额 · ${adjustTarget.email}` : "调整余额"}
                 open={Boolean(adjustTarget)}
                 forceRender
                 onCancel={() => setAdjustTarget(null)}
@@ -519,24 +548,21 @@ export function UsersPage() {
             >
                 <Form<AdjustFormValues> form={adjustForm} layout="vertical">
                     <Form.Item
-                        label="变动数量（正数增加，负数扣减）"
+                        label="变动金额（元，正数增加，负数扣减）"
                         name="amount"
                         rules={[
-                            { required: true, message: "请输入变动数量" },
+                            { required: true, message: "请输入变动金额" },
                             {
-                                validator: async (_rule, value: number) => {
+                                validator: async (_rule, value: string) => {
                                     if (!value || Number(value) === 0) {
-                                        return Promise.reject(new Error("变动数量不能为 0"));
-                                    }
-                                    if (!Number.isInteger(Number(value))) {
-                                        return Promise.reject(new Error("变动数量必须为整数"));
+                                        return Promise.reject(new Error("变动金额不能为 0"));
                                     }
                                     return Promise.resolve();
                                 },
                             },
                         ]}
                     >
-                        <InputNumber style={{ width: "100%" }} step={10} placeholder="例如 100 或 -50" />
+                        <InputNumber<string> stringMode style={{ width: "100%" }} step="0.01" placeholder="例如 1.00 或 -0.50" />
                     </Form.Item>
                     <Form.Item
                         label="调账原因"
@@ -568,24 +594,21 @@ export function UsersPage() {
             >
                 <Form<RechargeFormValues> form={rechargeForm} layout="vertical">
                     <Form.Item
-                        label="充值积分"
+                        label="充值金额（元）"
                         name="amount"
                         rules={[
-                            { required: true, message: "请输入充值积分" },
+                            { required: true, message: "请输入充值金额" },
                             {
-                                validator: async (_rule, value: number) => {
+                                validator: async (_rule, value: string) => {
                                     if (!value || Number(value) <= 0) {
-                                        return Promise.reject(new Error("充值积分必须大于 0"));
-                                    }
-                                    if (!Number.isInteger(Number(value))) {
-                                        return Promise.reject(new Error("充值积分必须为整数"));
+                                        return Promise.reject(new Error("充值金额必须大于 0"));
                                     }
                                     return Promise.resolve();
                                 },
                             },
                         ]}
                     >
-                        <InputNumber style={{ width: "100%" }} min={1} step={100} placeholder="请输入充值积分" />
+                        <InputNumber<string> stringMode style={{ width: "100%" }} step="0.01" placeholder="请输入充值金额（元）" prefix="¥" />
                     </Form.Item>
                     <Form.Item label="备注" name="remark">
                         <Input.TextArea rows={3} placeholder="例如：线下转账补充" maxLength={200} showCount />
@@ -639,14 +662,14 @@ export function UsersPage() {
                                 </Descriptions.Item>
                                 <Descriptions.Item label="邮箱">{detailUser.email}</Descriptions.Item>
                                 <Descriptions.Item label="昵称">{detailUser.displayName || "-"}</Descriptions.Item>
-                                <Descriptions.Item label="可用积分">
-                                    <span className="credits-value">{formatCredits(detailUser.available)}</span>
+                                <Descriptions.Item label="可用余额（元）">
+                                    <span className="credits-value">{amountText(detailUser.available)}</span>
                                 </Descriptions.Item>
-                                <Descriptions.Item label="冻结积分">
-                                    <span className="credits-value">{formatCredits(detailUser.frozen)}</span>
+                                <Descriptions.Item label="冻结余额（元）">
+                                    <span className="credits-value">{amountText(detailUser.frozen)}</span>
                                 </Descriptions.Item>
-                                <Descriptions.Item label="累计消耗">
-                                    <span className="credits-value">{formatCredits(detailUser.totalConsumed)}</span>
+                                <Descriptions.Item label="累计消耗（元）">
+                                    <span className="credits-value">{amountText(detailUser.totalConsumed)}</span>
                                 </Descriptions.Item>
                                 <Descriptions.Item label="任务数">{formatCredits(detailUser.taskCount)}</Descriptions.Item>
                                 <Descriptions.Item label="注册时间">{formatDateTime(detailUser.createdAt)}</Descriptions.Item>
@@ -654,7 +677,7 @@ export function UsersPage() {
                             </Descriptions>
 
                             <Typography.Title level={5} style={{ marginTop: 0 }}>
-                                积分流水
+                                余额流水
                             </Typography.Title>
                             {detailTransactionTable}
                         </>

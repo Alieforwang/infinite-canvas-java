@@ -11,6 +11,7 @@ export type CanvasNode = {
     content?: string;
     fileNo?: string;
     storageKey?: string;
+    taskNo?: string;
 };
 
 export type CanvasDocument = {

@@ -1,4 +1,5 @@
 import axios, { AxiosError } from "axios";
+import { currencyText } from "@/lib/currency";
 
 export type ApiEnvelope<T> = {
     code: string;
@@ -14,7 +15,7 @@ export class ApiError extends Error {
     readonly status?: number;
 
     constructor(code: string, message: string, requestId = "", status?: number) {
-        super(message || code);
+        super(currencyText(message || code));
         this.name = "ApiError";
         this.code = code;
         this.requestId = requestId;

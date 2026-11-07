@@ -6,13 +6,15 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router-do
 
 import { createAsset } from "@/api/assets";
 import { uploadFile } from "@/api/files";
-import { listModels, quoteCredits, type VideoModelView } from "@/api/models";
+import { getModelRatios, getModelSpecs, listModels, quoteCredits, type VideoModelView } from "@/api/models";
 import { createTask, getTask, type VideoTaskView } from "@/api/video-tasks";
 import { TaskFeedback } from "@/components/tasks/task-feedback";
 import { AddToCanvasModal } from "@/components/works/add-to-canvas-modal";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { useCurrency } from "@/stores/use-public-settings-store";
 import { useVideoTaskStore } from "@/stores/use-video-task-store";
 import { cn } from "@/lib/utils";
+import { sizeForRatio } from "@/lib/video-size";
 
 type Reference = { fileNo: string; url: string; name: string };
 type VideoDraft = {
@@ -58,13 +60,6 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
     cancelled: { label: "已取消", color: "default" },
 };
 
-const SIZE_BY_RATIO = (ratio: string, resolution: string) => {
-    const height = resolution === "480p" ? 480 : resolution === "1080p" ? 1080 : 720;
-    const value = ratio === "1:1" ? 1 : ratio === "3:4" ? 0.75 : ratio === "4:3" ? 4 / 3 : ratio === "9:16" ? 9 / 16 : ratio === "21:9" ? 21 / 9 : 16 / 9;
-    const width = Math.round((height * value) / 2) * 2;
-    return `${width}x${height}`;
-};
-
 export default function VideoPage() {
     const userId = useAuthStore((state) => state.user?.id);
     return userId ? <VideoWorkspace key={userId} userId={userId} /> : null;
@@ -72,6 +67,7 @@ export default function VideoPage() {
 
 function VideoWorkspace({ userId }: { userId: number }) {
     const { message } = App.useApp();
+    const { formatCredits } = useCurrency();
     const credits = useAuthStore((state) => state.credits);
     const tasks = useVideoTaskStore((state) => state.tasks);
     const track = useVideoTaskStore((state) => state.track);
@@ -128,7 +124,10 @@ function VideoWorkspace({ userId }: { userId: number }) {
                     setModelId(selected.id);
                     setSeconds((value) => selected.params.seconds.includes(String(value)) ? value : Number(selected.params.seconds[0] ?? 6));
                     setResolution((value) => selected.params.resolutions.includes(value) ? value : selected.params.resolutions[0] ?? "720p");
-                    setRatio((value) => selected.params.ratios.includes(value) ? value : selected.params.ratios[0] ?? "16:9");
+                    setRatio((value) => {
+                        const ratios = getModelRatios(selected);
+                        return ratios.includes(value) ? value : ratios[0] ?? "16:9";
+                    });
                     if (!selected.params.supportsAudio) setAudio(false);
                     if (!selected.params.supportsWatermark) setWatermark(false);
                 }
@@ -182,7 +181,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
         if (!selected) return;
         setSeconds(Number(selected.params.seconds[0] ?? 6));
         setResolution(selected.params.resolutions[0] ?? "720p");
-        setRatio(selected.params.ratios[0] ?? "16:9");
+        setRatio(getModelRatios(selected)[0] ?? "16:9");
         setAudio(false);
         setWatermark(false);
     };
@@ -220,7 +219,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
             return;
         }
         if (estimate > credits.available) {
-            message.error(`积分不足：本次需要 ${estimate} 积分，当前可用 ${credits.available} 积分`);
+            message.error(`余额不足：本次需要 ${formatCredits(estimate)}，当前可用 ${formatCredits(credits.available)}`);
             return;
         }
         persistDraft();
@@ -231,7 +230,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
                 prompt: prompt.trim(),
                 seconds,
                 resolution,
-                size: SIZE_BY_RATIO(ratio, resolution),
+                size: sizeForRatio(ratio, resolution),
                 ratio,
                 generateAudio: audio,
                 watermark,
@@ -245,7 +244,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
                 progress: 0,
                 modelName: model.displayName,
                 prompt: prompt.trim(),
-                params: { modelId: model.id, seconds, resolution, size: SIZE_BY_RATIO(ratio, resolution), ratio, generateAudio: audio, watermark, mode },
+                params: { modelId: model.id, seconds, resolution, size: sizeForRatio(ratio, resolution), ratio, generateAudio: audio, watermark, mode },
                 referenceFileNos: references.map((item) => item.fileNo),
                 heldCredits: created.heldCredits,
                 settledCredits: 0,
@@ -376,7 +375,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
                             placeholder="选择模型"
                             options={models.map((item) => ({
                                 value: item.id,
-                                label: `${item.displayName} · ${item.pricing.creditsPerSecond} 积分/秒`,
+                                label: `${item.displayName} · ${getModelSpecs(item).length ? `${formatCredits(Math.min(...getModelSpecs(item).map((spec) => spec.credits)))} /条起` : "规格待配置"}`,
                             }))}
                             onChange={selectModel}
                             notFoundContent="暂无可用模型，请联系管理员"
@@ -453,7 +452,7 @@ function VideoWorkspace({ userId }: { userId: number }) {
                             <Select
                                 className="w-full"
                                 value={ratio}
-                                options={(model?.params.ratios ?? ["16:9"]).map((value) => ({ value, label: value }))}
+                                options={(model ? getModelRatios(model) : ["16:9"]).map((value) => ({ value, label: value }))}
                                 onChange={(value) => setRatio(value)}
                             />
                         </div>
@@ -485,16 +484,16 @@ function VideoWorkspace({ userId }: { userId: number }) {
                     <div className="rounded-lg bg-stone-50 p-3 text-xs text-stone-600 dark:bg-stone-800/60 dark:text-stone-300">
                         <div className="flex items-center justify-between">
                             <span>预估消耗</span>
-                            <span className="font-semibold text-stone-900 dark:text-stone-100">{estimate} 积分</span>
+                            <span className="font-semibold text-stone-900 dark:text-stone-100">{formatCredits(estimate)}</span>
                         </div>
                         <div className="mt-1 flex items-center justify-between">
-                            <span>可用积分</span>
-                            <span>{credits.available}</span>
+                            <span>可用余额</span>
+                            <span>{formatCredits(credits.available)}</span>
                         </div>
                         {estimate > credits.available ? (
                             <div className="mt-3 border-t border-stone-200 pt-2 dark:border-stone-700">
-                                <p className="text-amber-700 dark:text-amber-400">还差 {estimate - credits.available} 积分，草稿已为当前账户保留。</p>
-                                <Button size="small" className="mt-2" onClick={goToAccount}>去账户补充积分</Button>
+                                <p className="text-amber-700 dark:text-amber-400">还差 {formatCredits(estimate - credits.available)}，草稿已为当前账户保留。</p>
+                                <Button size="small" className="mt-2" onClick={goToAccount}>去账户充值</Button>
                             </div>
                         ) : null}
                     </div>

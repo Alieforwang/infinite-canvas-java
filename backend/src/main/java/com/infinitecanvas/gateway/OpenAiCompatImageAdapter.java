@@ -21,6 +21,8 @@ import java.util.Map;
 public class OpenAiCompatImageAdapter {
     public static final int MAX_IMAGE_BYTES = 20 * 1024 * 1024;
     private static final int MAX_JSON_BYTES = 29 * 1024 * 1024;
+    private static final int MAX_ERROR_BYTES = 8 * 1024;
+    private static final String OMITTED_RESPONSE = "image response (body omitted)";
     private final RestClient http;
     private final UpstreamClient upstream;
     private final SsrfGuard ssrf;
@@ -75,9 +77,18 @@ public class OpenAiCompatImageAdapter {
             }
             return request.contentType(type).body(body).exchange((req, response) -> {
                 int status = response.getStatusCode().value();
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                    ErrorSummary error = summarizeError(response.getBody());
+                    upstream.record(taskId, taskNo, "IMAGE_CREATE", status, System.currentTimeMillis() - start,
+                            response.getHeaders().getFirst("x-request-id"), error.code(), error.snippet());
+                    if (status == 400 && "moderation_blocked".equals(error.code())) {
+                        throw new UpstreamException("UPSTREAM_MODERATION_BLOCKED",
+                                "上游内容审核未通过，请调整提示词后重试", status, "");
+                    }
+                    throw UpstreamException.of(channel, status, "");
+                }
                 upstream.record(taskId, taskNo, "IMAGE_CREATE", status, System.currentTimeMillis() - start,
-                        response.getHeaders().getFirst("x-request-id"), null, "image response (body omitted)");
-                if (!response.getStatusCode().is2xxSuccessful()) throw UpstreamException.of(channel, status, "");
+                        response.getHeaders().getFirst("x-request-id"), null, OMITTED_RESPONSE);
                 byte[] bytes = response.getBody().readNBytes(MAX_JSON_BYTES + 1);
                 if (bytes.length > MAX_JSON_BYTES) throw invalid("图片响应超过大小限制");
                 return json.readTree(bytes);
@@ -89,6 +100,32 @@ public class OpenAiCompatImageAdapter {
                     null, "UPSTREAM_UNREACHABLE", "image request failed");
             throw new UpstreamException("UPSTREAM_UNREACHABLE", "图片上游请求失败或超时", 502, "");
         }
+    }
+
+    private record ErrorSummary(String code, String snippet) { }
+
+    private ErrorSummary summarizeError(java.io.InputStream body) {
+        try {
+            byte[] bytes = body.readNBytes(MAX_ERROR_BYTES + 1);
+            if (bytes.length > MAX_ERROR_BYTES) return new ErrorSummary(null, OMITTED_RESPONSE);
+            JsonNode error = json.readTree(bytes).path("error");
+            String code = safeIdentifier(error.path("code"), "[a-z][a-z0-9_]{1,48}");
+            String type = safeIdentifier(error.path("type"), "[a-z][a-z0-9_]{1,48}");
+            String param = safeIdentifier(error.path("param"), "[a-zA-Z][a-zA-Z0-9_.\\[\\]]{0,48}");
+            String snippet = OMITTED_RESPONSE
+                    + (code == null ? "" : " code=" + code)
+                    + (type == null ? "" : " type=" + type)
+                    + (param == null ? "" : " param=" + param);
+            return new ErrorSummary(code, snippet);
+        } catch (Exception ex) {
+            return new ErrorSummary(null, OMITTED_RESPONSE);
+        }
+    }
+
+    private static String safeIdentifier(JsonNode value, String pattern) {
+        if (!value.isTextual()) return null;
+        String text = value.textValue();
+        return text.matches(pattern) ? text : null;
     }
 
     public record ImageDownload(byte[] bytes, String contentType) { }

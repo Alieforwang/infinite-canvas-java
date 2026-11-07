@@ -7,6 +7,8 @@ export type AccountView = {
     totalConsumed: number;
     totalRecharged: number;
     exchangePerYuan: number;
+    currency?: "CNY";
+    currencyUnit?: "元";
     concurrencyLimit: number;
     running: number;
     currentPlan?: { name: string; expiresAt?: string; creditsTotal?: number; creditsUsed?: number } | null;

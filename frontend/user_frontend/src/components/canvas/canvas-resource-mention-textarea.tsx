@@ -18,24 +18,36 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     references: CanvasResourceReference[];
     onChange: (value: string) => void;
     onSubmit?: () => void;
+    /** Extra resources that can be attached through @ but are not references yet. */
+    mentionCandidates?: CanvasResourceReference[];
+    /** Called when @ picks a candidate that is not attached yet (e.g. add it as a reference). */
+    onMentionSelect?: (reference: CanvasResourceReference) => void;
+    /** Enter submits by default (old panels); composers that keep multi-line prompts pass false. */
+    submitOnPlainEnter?: boolean;
     containerClassName?: string;
     highlightLabels?: boolean;
 };
 
-export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea({ value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, ...props }, forwardedRef) {
+export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea({ value, references, onChange, onSubmit, mentionCandidates = [], onMentionSelect, submitOnPlainEnter = true, onKeyDown, className, containerClassName, style, highlightLabels = true, ...props }, forwardedRef) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const overlayRef = useRef<HTMLDivElement | null>(null);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [hasSelection, setHasSelection] = useState(false);
+    const hasMentionPool = references.some((item) => item.active) || mentionCandidates.length > 0;
     const candidates = useMemo(() => {
         if (!mention) return [];
+        const pool = new Map<string, CanvasResourceReference>();
+        references.filter((item) => item.active).forEach((item) => pool.set(item.id, item));
+        mentionCandidates.forEach((item) => {
+            if (!pool.has(item.id)) pool.set(item.id, item);
+        });
+        const items = [...pool.values()];
         const query = mention.query.trim().toLowerCase();
-        const activeReferences = references.filter((item) => item.active);
-        if (!query) return activeReferences;
-        return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
-    }, [mention, references]);
+        if (!query) return items;
+        return items.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
+    }, [mention, references, mentionCandidates]);
     const activeLabels = useMemo(() => (highlightLabels ? Array.from(new Set(references.filter((item) => item.active).map((item) => item.label))).sort((a, b) => b.length - a.length) : []), [highlightLabels, references]);
 
     const updateValue = (next: string, selectionStart?: number) => {
@@ -55,7 +67,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
         const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
-        if (!match || !references.some((item) => item.active)) {
+        if (!match || !hasMentionPool) {
             closeMention();
             return;
         }
@@ -67,9 +79,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (!mention) return;
         const textarea = textareaRef.current;
         const end = textarea?.selectionStart ?? value.length;
-        const insertText = `${reference.label} `;
+        // Text resources contribute their actual text; media resources contribute their @label.
+        const insertText = `${reference.kind === "text" && reference.text ? reference.text.trim() : reference.label} `;
         const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
         closeMention();
+        if (!reference.active) onMentionSelect?.(reference);
         updateValue(next, mention.start + insertText.length);
     };
 
@@ -172,7 +186,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                             return;
                         }
                     }
-                    if (isPlainEnterKey(event) && onSubmit) {
+                    if (submitOnPlainEnter && isPlainEnterKey(event) && onSubmit) {
                         event.preventDefault();
                         onSubmit();
                         return;
@@ -270,7 +284,7 @@ function MentionMenu({ textarea, caretIndex, references, activeIndex, theme, onS
                     <ReferencePreview reference={reference} />
                     <span className="min-w-0 flex-1">
                         <span className="block font-medium">{reference.label}</span>
-                        <span className="block truncate opacity-65">{reference.text || reference.title}</span>
+                        <span className="block truncate opacity-65">{reference.kind === "image" ? "图片素材 · 加入参考图" : reference.text || reference.title}</span>
                     </span>
                 </button>
             ))}

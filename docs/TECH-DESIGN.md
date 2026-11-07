@@ -472,7 +472,9 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 | 过滤器链 | `@Order(1)` `AdminJwtAuthFilter` + `SecurityFilterChain securityMatcher("/api/admin/**")`：仅 `/api/admin/auth/login` permitAll，其余 `.anyRequest().hasRole("ADMIN")` | `@Order(2)` `UserJwtAuthFilter` + `SecurityFilterChain securityMatcher("/api/**")`：`/api/admin/**` 显式 denyAll，其余 `authenticated()`；`/api/public/**`、`/api/auth/(register|login|refresh)` permitAll |
 | 前端存储键 | `ic_access_token` | `ic_admin_access_token`（两套 SPA 独立，不复用） |
 | 越权兜底 | 用户 token 的 `aud≠admin`，在链 1 即被 403 拒绝 | — |
+| 公开接口 | `/api/public/**`、`/api/auth/(register|login|refresh)`、`/api/files/*/content` 由 `PublicPaths` 统一维护：`permitAll` 且不做 audience（role）校验，管理端 token 可读 `GET /api/public/settings`；受保护接口仍严格两端隔离 | 同左 |
 > **决策**：管理员独立表 + 独立 audience，不用 `user.role='ADMIN'`。
+> **注意**：`JwtAuthenticationFilter` 只对受保护接口校验 role；公开接口没有身份语义，不得按 audience 拒绝（否则管理端布局携带管理员 token 读取公共人民币设置会 403）。新增 `permitAll` 路径必须同时登记到 `PublicPaths`。
 > **为什么**：管理员没有积分/资产/画布却拥有改价与调账权；混在一张表里，一旦注册 DTO 漏了 `@JsonIgnore` 就是提权漏洞。分表让"成为管理员"必须由运维/环境变量操作。
 > **替代**：`user.role` + `@PreAuthorize`——少一张表，但把提权面暴露在与用户输入同一张表上。
 ### 5.3 密码与登录防护

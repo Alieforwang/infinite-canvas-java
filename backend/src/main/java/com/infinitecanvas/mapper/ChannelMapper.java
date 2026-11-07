@@ -12,6 +12,9 @@ public interface ChannelMapper {
 
     Channel selectById(Long id);
 
+    /** Serialize route imports/edits for one channel. Must run in a transaction. */
+    Channel selectByIdForUpdate(Long id);
+
     Channel selectByName(@Param("name") String name);
 
     List<Channel> selectAllSorted();
@@ -19,6 +22,8 @@ public interface ChannelMapper {
     int insert(Channel channel);
 
     int updateById(Channel channel);
+
+    int updateTestResult(Channel channel);
 
     int deleteById(Long id);
 

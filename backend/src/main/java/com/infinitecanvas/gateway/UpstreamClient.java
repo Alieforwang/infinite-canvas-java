@@ -172,6 +172,12 @@ public class UpstreamClient {
     }
 
     public java.util.List<String> listModels(Channel channel, String modelsUrl) {
+        return discoverModels(channel, modelsUrl).stream().map(DiscoveredModel::id).toList();
+    }
+
+    public record DiscoveredModel(String id, String capability) {}
+
+    public java.util.List<DiscoveredModel> discoverModels(Channel channel, String modelsUrl) {
         String baseUrl = channel.getBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) baseUrl = channel.getNormalizedBaseUrl();
         java.util.List<String> urls = ModelDiscovery.urls(baseUrl, modelsUrl);
@@ -188,7 +194,7 @@ public class UpstreamClient {
                         })
                         .body(String.class);
                 record(null, "", "QUERY", 200, System.currentTimeMillis() - start, null, null, null);
-                return ModelDiscovery.parse(objectMapper.readTree(raw == null ? "" : raw));
+                return ModelDiscovery.parseDiscovered(objectMapper.readTree(raw == null ? "" : raw));
             } catch (RestClientResponseException ex) {
                 int status = ex.getStatusCode().value();
                 record(null, "", "QUERY", status, System.currentTimeMillis() - start, null, null, null);

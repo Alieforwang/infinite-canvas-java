@@ -71,6 +71,52 @@ class OpenAiCompatImageAdapterTest {
         assertTrue(body.contains("upstream-model"));
     }
 
+    @Test void recordsOnlySafeErrorFieldsForUpstreamBadRequest() {
+        server.enqueue(new MockResponse().setResponseCode(400).setHeader("Content-Type", "application/json")
+                .setBody("{\"error\":{\"code\":\"invalid_size\",\"type\":\"invalid_request_error\",\"param\":\"size\",\"message\":\"private prompt and secret token\"}}"));
+        var failure = assertThrows(UpstreamException.class,
+                () -> adapter.generate(channel, 10L, "img_fixture", "model", "draw", "1024x1024", List.of()));
+        assertEquals("UPSTREAM_INVALID_PARAM", failure.getCode());
+        var captor = org.mockito.ArgumentCaptor.forClass(UpstreamCallLog.class);
+        verify(logs).insert(captor.capture());
+        var entry = captor.getValue();
+        assertEquals(400, entry.getHttpStatus());
+        assertEquals("invalid_size", entry.getErrorCode());
+        assertTrue(entry.getResponseSnippet().contains("type=invalid_request_error"));
+        assertTrue(entry.getResponseSnippet().contains("param=size"));
+        assertFalse(entry.getResponseSnippet().contains("private prompt"));
+        assertFalse(entry.getResponseSnippet().contains("secret token"));
+    }
+
+    @Test void identifiesUpstreamModerationBlockWithoutExposingResponseText() {
+        server.enqueue(new MockResponse().setResponseCode(400).setHeader("Content-Type", "application/json")
+                .setBody("{\"error\":{\"code\":\"moderation_blocked\",\"type\":\"image_generation_user_error\",\"message\":\"sensitive prompt must not be logged\"}}"));
+        var failure = assertThrows(UpstreamException.class,
+                () -> adapter.generate(channel, 10L, "img_fixture", "model", "draw", "1024x1024", List.of()));
+        assertEquals("UPSTREAM_MODERATION_BLOCKED", failure.getCode());
+        assertEquals("上游内容审核未通过，请调整提示词后重试", failure.getMessage());
+        var captor = org.mockito.ArgumentCaptor.forClass(UpstreamCallLog.class);
+        verify(logs).insert(captor.capture());
+        assertEquals("moderation_blocked", captor.getValue().getErrorCode());
+        assertFalse(captor.getValue().getResponseSnippet().contains("sensitive prompt"));
+    }
+
+    @Test void omitsUnstructuredAndOversizedErrorBodies() {
+        server.enqueue(new MockResponse().setResponseCode(400)
+                .setBody("{\"error\":{\"code\":\"secret token with spaces\",\"message\":\"private prompt\"}}"));
+        assertThrows(UpstreamException.class,
+                () -> adapter.generate(channel, 10L, "img_fixture", "model", "draw", "1024x1024", List.of()));
+        server.enqueue(new MockResponse().setResponseCode(400).setBody("private prompt ".repeat(1000)));
+        assertThrows(UpstreamException.class,
+                () -> adapter.generate(channel, 10L, "img_fixture", "model", "draw", "1024x1024", List.of()));
+        var captor = org.mockito.ArgumentCaptor.forClass(UpstreamCallLog.class);
+        verify(logs, times(2)).insert(captor.capture());
+        for (var entry : captor.getAllValues()) {
+            assertNull(entry.getErrorCode());
+            assertEquals("image response (body omitted)", entry.getResponseSnippet());
+        }
+    }
+
     @Test void rejectsUpstreamFailureAndNeverFollowsCreateRedirect() {
         server.enqueue(new MockResponse().setResponseCode(302).setHeader("Location", server.url("/credential-trap")));
         assertThrows(UpstreamException.class, () -> adapter.generate(channel, 10L, "img_fixture", "model", "draw", "1024x1024", List.of()));

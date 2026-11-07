@@ -1,6 +1,6 @@
 # 无限画布 · 视频生成平台（infinite-canvas-studio）
 
-把参考项目 [infinite-canvas](D:\software\desk\infinite-canvas) 的「本地单人画布工具」升级为平台：注册登录、管理员配置 OpenAI 兼容视频模型、积分/套餐计费、云端画布与资产。
+把参考项目 [infinite-canvas](D:\software\desk\infinite-canvas) 的「本地单人画布工具」升级为平台：注册登录、管理员配置 OpenAI 兼容模型、人民币余额/套餐计费、云端画布与资产。
 
 ## 当前进度
 
@@ -42,9 +42,9 @@ infinite-canvas-studio/
 
 ## 已实现的后端能力（M1 完成）
 
-- 账号：注册（赠送积分）、登录、refresh 轮换、登出、me、改昵称、改密码、禁用用户
+- 账号：注册（赠送人民币余额）、登录、refresh 轮换、登出、me、改昵称、改密码、禁用用户
 - 管理端认证：独立账号/独立 JWT audience，用户 Token 访问管理接口 403
-- 模型：用户端模型列表（参数能力 + 计价快照）；管理端渠道/模型 CRUD、连通性测试、AES-GCM 密钥
+- 模型：同步按语言/图片生成/视频生成/待审核四类管理；管理端分类筛选、人工纠正与历史分类预览确认；用户端仅提供图片/视频创作模型（参数能力 + 计价快照）；渠道/模型 CRUD、连通性测试、AES-GCM 密钥
 - 视频任务：multipart 创建（能力校验、并发上限、幂等键、HOLD 预扣）→ DB 轮询 → Mock/真实上游 create/query → 结果下载校验落盘 → 结算；失败/取消全额退款
 - 计费：`HOLD/SETTLE/REFUND` 单幂等键互斥、不可变流水、管理员调账/充值/开通套餐、兑换码批次
 - 文件：上传（类型/magic/大小校验）、HMAC 签名 URL、Range 206、篡改 403
@@ -54,6 +54,12 @@ infinite-canvas-studio/
 - Mock 上游：dev profile `/mock/v1/videos`，支持失败注入
 - 数据访问：原生 MyBatis（无 MyBatis-Plus），19 个 Mapper 的 SQL 手写在 `backend/src/main/resources/mapper/*.xml`
 - 运行方式：`backend/README.md` 与 `backend/scripts/*.ps1`
+
+## 人民币金额兼容
+
+两套前端的余额、模型售价、成本、充值、兑换码与账单均以人民币元显示/输入。原 `credits` API 字段保留为内部记账单位；按历史 `credit.exchange_per_yuan`（默认 100，自定义值继续有效）换算一次，不重写或缩放原有余额和流水。记账精度现为只读，独立成本比例 `pricing.credits_per_yuan` 已弃用；套餐 `priceAmount` 本来就是元，不再次换算。
+
+部署需同时更新后端及两套前端，备份后按序执行 V7/V8，并核对原精度、余额和组价。V8 在旧成本比例不一致时仅清除派生成本缓存，需重新同步价格；当前只完成 H2 兼容迁移回归，未在目标 MySQL 或生产库执行。详见 [模型分类、人民币换算与部署边界](docs/REDESIGN-MODEL-PRICING-ROUTING.md)。
 
 ## 快速验证
 

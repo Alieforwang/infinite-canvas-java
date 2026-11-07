@@ -26,8 +26,20 @@ public class AdminModelController {
     }
 
     @GetMapping
-    public ApiResponse<List<ModelDtos.ModelAdminView>> list() {
-        return ApiResponse.ok(modelService.adminList());
+    public ApiResponse<List<ModelDtos.ModelAdminView>> list(
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String capability) {
+        return ApiResponse.ok(modelService.adminList(capability));
+    }
+
+    @GetMapping("/classification-preview")
+    public ApiResponse<List<ModelDtos.ClassificationSuggestion>> classificationPreview() {
+        return ApiResponse.ok(modelService.classificationPreview());
+    }
+
+    @PostMapping("/classification-apply")
+    public ApiResponse<ModelDtos.ClassificationApplyResult> classificationApply(
+            @RequestBody ModelDtos.ClassificationApplyRequest request) {
+        return ApiResponse.ok(modelService.classificationApply(request));
     }
 
     @PostMapping

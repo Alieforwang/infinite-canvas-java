@@ -20,7 +20,7 @@ export default function RegisterPage() {
         setLoading(true);
         try {
             await register(values.email.trim(), values.password, values.displayName?.trim());
-            message.success("注册成功，已赠送积分");
+            message.success("注册成功，体验余额已到账");
             navigate("/video", { replace: true });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "注册失败");

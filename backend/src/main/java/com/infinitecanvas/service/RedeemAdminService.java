@@ -39,7 +39,7 @@ public class RedeemAdminService {
             throw new BizException(ErrorCode.VALID_40001, "生成数量需在 1–1000");
         }
         if ((request.credits() == null || request.credits() <= 0) && request.planId() == null) {
-            throw new BizException(ErrorCode.VALID_40001, "积分或套餐至少填写一个");
+            throw new BizException(ErrorCode.VALID_40001, "兑换金额或套餐至少填写一个");
         }
         String prefix = request.prefix() == null ? "" : request.prefix().trim().toUpperCase();
         String batchNo = "B" + LocalDateTime.now(ZoneOffset.UTC).toString().replaceAll("[^0-9]", "").substring(0, 14);

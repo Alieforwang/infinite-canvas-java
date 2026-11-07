@@ -28,6 +28,20 @@ export type VideoModelView = {
 export type ModelCapability = "image" | "video";
 export type ModelSpec = { resolution: string; seconds?: number; credits: number };
 
+/**
+ * Upstream-imported video models often arrive without configured ratios. Fall
+ * back to the common landscape/portrait/square set instead of shipping an empty
+ * ratio selector (the concrete pixel size is derived from ratio + resolution by
+ * resolveVideoSize, so every fallback ratio here is renderable).
+ */
+export const DEFAULT_VIDEO_RATIOS = ["16:9", "9:16", "1:1"];
+
+export function getModelRatios(model: VideoModelView): string[] {
+    const configured = Array.from(new Set((model.params.ratios ?? []).map((value) => value.trim()).filter(Boolean)));
+    if (configured.length) return configured;
+    return model.capability === "video" ? [...DEFAULT_VIDEO_RATIOS] : [];
+}
+
 export function listModels(capability: ModelCapability = "video"): Promise<VideoModelView[]> {
     return http.get<unknown, VideoModelView[]>("/models", { params: { capability } });
 }

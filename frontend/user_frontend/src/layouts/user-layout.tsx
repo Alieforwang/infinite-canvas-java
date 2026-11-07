@@ -5,6 +5,7 @@ import { LogOut, UserRound } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuthStore } from "@/stores/use-auth-store";
+import { useCurrency } from "@/stores/use-public-settings-store";
 import { TaskCenter } from "@/components/tasks/task-center";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
 
 export default function UserLayout({ children }: { children?: ReactNode }) {
     const navigate = useNavigate();
+    const { formatCredits } = useCurrency();
     const { pathname } = useLocation();
     const user = useAuthStore((state) => state.user);
     const credits = useAuthStore((state) => state.credits);
@@ -74,8 +76,8 @@ export default function UserLayout({ children }: { children?: ReactNode }) {
                         to="/account"
                         className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-600 transition hover:border-stone-400 dark:border-stone-700 dark:text-stone-300"
                     >
-                        可用 <span className="font-semibold text-stone-900 dark:text-stone-100">{credits.available}</span> 积分
-                        {credits.frozen > 0 ? <span className="ml-2 text-amber-600">冻结 {credits.frozen}</span> : null}
+                        可用 <span className="font-semibold text-stone-900 dark:text-stone-100">{formatCredits(credits.available)}</span>
+                        {credits.frozen > 0 ? <span className="ml-2 text-amber-600">冻结 {formatCredits(credits.frozen)}</span> : null}
                     </Link>
                     <Dropdown
                         menu={{

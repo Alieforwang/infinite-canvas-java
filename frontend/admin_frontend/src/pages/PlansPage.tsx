@@ -21,24 +21,60 @@ import { adminApi } from "../api/admin";
 import { PageHead } from "../components/PageHead";
 import { StatusTag } from "../components/StatusTag";
 import { useFeedback } from "../lib/feedback";
-import { formatCredits, formatDateTime, formatMoney, PLAN_TYPE_META } from "../lib/format";
+import { useCurrency } from "../lib/currency";
+import { creditsToYuan, currencyText, formatDateTime, formatYuan, PLAN_TYPE_META, yuanToCredits } from "../lib/format";
 import type { Plan, PlanPayload } from "../types";
 
 interface PlanFormValues {
     code: string;
     name: string;
     type: string;
-    priceAmount: number;
-    credits: number;
-    bonusCredits: number;
+    priceAmount: string;
+    credits: string;
+    bonusCredits: string;
     validDays: number;
     description?: string;
     sort: number;
     enabled: boolean;
 }
 
+interface OriginalCreditInputs {
+    credits: number;
+    bonusCredits: number;
+    displayedCredits: string;
+    displayedBonus: string;
+}
+
+export function planFormPayload(values: PlanFormValues, exchangePerYuan: number, original: OriginalCreditInputs | null): PlanPayload {
+    const credits = original && values.credits === original.displayedCredits
+        ? original.credits : yuanToCredits(values.credits, exchangePerYuan);
+    const bonusCredits = original && values.bonusCredits === original.displayedBonus
+        ? original.bonusCredits : yuanToCredits(values.bonusCredits, exchangePerYuan);
+    const priceAmount = Number(values.priceAmount);
+    if (credits < 0 || bonusCredits < 0) throw new RangeError("余额及赠送余额不能为负数");
+    if (!Number.isFinite(priceAmount) || priceAmount < 0) throw new RangeError("请输入有效的非负价格");
+    return {
+        code: values.code.trim(),
+        name: values.name.trim(),
+        type: values.type,
+        priceAmount,
+        credits,
+        bonusCredits,
+        validDays: values.validDays,
+        description: values.description?.trim() ?? "",
+        sort: values.sort,
+        enabled: values.enabled,
+    };
+}
+
+const NON_NEGATIVE_AMOUNT_RULE = {
+    validator: async (_rule: unknown, value: string) => {
+        if (!Number.isFinite(Number(value)) || Number(value) < 0) throw new Error("金额必须为非负数");
+    },
+};
+
 const TYPE_OPTIONS = [
-    { value: "CREDIT_PACK", label: "CREDIT_PACK（积分包）" },
+    { value: "CREDIT_PACK", label: "CREDIT_PACK（充值包）" },
     { value: "PLAN", label: "PLAN（周期套餐）" },
 ];
 
@@ -51,6 +87,8 @@ export function PlansPage() {
     const [editing, setEditing] = useState<Plan | null>(null);
     const [saving, setSaving] = useState(false);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const { exchangePerYuan, ready } = useCurrency();
+    const [rawCreditInputs, setRawCreditInputs] = useState<OriginalCreditInputs | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -70,12 +108,14 @@ export function PlansPage() {
 
     const openCreate = () => {
         setEditing(null);
+        const displayedCredits = String(creditsToYuan(1000, exchangePerYuan) ?? 0);
+        setRawCreditInputs({ credits: 1000, bonusCredits: 0, displayedCredits, displayedBonus: "0" });
         form.resetFields();
         form.setFieldsValue({
             type: "CREDIT_PACK",
-            priceAmount: 10,
-            credits: 1000,
-            bonusCredits: 0,
+            priceAmount: "10",
+            credits: displayedCredits,
+            bonusCredits: "0",
             validDays: 0,
             description: "",
             sort: 0,
@@ -86,14 +126,18 @@ export function PlansPage() {
 
     const openEdit = (record: Plan) => {
         setEditing(record);
+        // Keep the raw units alongside repeating yuan fractions so unrelated edits never rewrite money.
+        const displayedCredits = String(creditsToYuan(record.credits, exchangePerYuan) ?? 0);
+        const displayedBonus = String(creditsToYuan(record.bonusCredits, exchangePerYuan) ?? 0);
+        setRawCreditInputs({ credits: record.credits, bonusCredits: record.bonusCredits, displayedCredits, displayedBonus });
         form.resetFields();
         form.setFieldsValue({
             code: record.code,
             name: record.name,
             type: record.type,
-            priceAmount: Number(record.priceAmount),
-            credits: record.credits,
-            bonusCredits: record.bonusCredits,
+            priceAmount: String(record.priceAmount),
+            credits: displayedCredits,
+            bonusCredits: displayedBonus,
             validDays: record.validDays,
             description: record.description ?? "",
             sort: record.sort,
@@ -109,18 +153,17 @@ export function PlansPage() {
         } catch {
             return;
         }
-        const payload: PlanPayload = {
-            code: values.code.trim(),
-            name: values.name.trim(),
-            type: values.type,
-            priceAmount: values.priceAmount,
-            credits: values.credits,
-            bonusCredits: values.bonusCredits,
-            validDays: values.validDays,
-            description: values.description?.trim() ?? "",
-            sort: values.sort,
-            enabled: values.enabled,
-        };
+        if (!ready) {
+            showApiError(new Error("金额设置尚未就绪，请稍后重试"));
+            return;
+        }
+        let payload: PlanPayload;
+        try {
+            payload = planFormPayload(values, exchangePerYuan, rawCreditInputs);
+        } catch (err) {
+            showApiError(err);
+            return;
+        }
         setSaving(true);
         try {
             if (editing) {
@@ -155,7 +198,7 @@ export function PlansPage() {
     const columns: TableColumnsType<Plan> = [
         { title: "ID", dataIndex: "id", width: 64 },
         { title: "Code", dataIndex: "code", width: 130, render: (value: string) => <span className="mono">{value}</span> },
-        { title: "名称", dataIndex: "name", width: 220, render: (value: string) => <Typography.Text strong>{value}</Typography.Text> },
+        { title: "名称", dataIndex: "name", width: 220, render: (value: string) => <Typography.Text strong>{currencyText(value, exchangePerYuan)}</Typography.Text> },
         {
             title: "类型",
             dataIndex: "type",
@@ -167,21 +210,21 @@ export function PlansPage() {
             dataIndex: "priceAmount",
             width: 110,
             align: "right",
-            render: (value: number) => <span className="money-value">{formatMoney(value)}</span>,
+            render: (value: number) => <span className="money-value">{formatYuan(value)}</span>,
         },
         {
-            title: "积分",
+            title: "余额（元）",
             dataIndex: "credits",
             width: 120,
             align: "right",
-            render: (value: number) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number) => <span className="credits-value">{ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "金额未就绪"}</span>,
         },
         {
-            title: "赠送积分",
+            title: "赠送余额（元）",
             dataIndex: "bonusCredits",
             width: 110,
             align: "right",
-            render: (value: number) => <span className="credits-value">{formatCredits(value)}</span>,
+            render: (value: number) => <span className="credits-value">{ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "金额未就绪"}</span>,
         },
         {
             title: "有效期",
@@ -194,7 +237,7 @@ export function PlansPage() {
             dataIndex: "description",
             ellipsis: true,
             width: 220,
-            render: (value: string) => <span className="muted">{value || "-"}</span>,
+            render: (value: string) => <span className="muted">{currencyText(value, exchangePerYuan) || "-"}</span>,
         },
         { title: "排序", dataIndex: "sort", width: 76, align: "right" as const },
         {
@@ -241,7 +284,7 @@ export function PlansPage() {
         <>
             <PageHead
                 title="套餐管理"
-                description="管理积分包与周期套餐：价格、积分、赠送积分、有效天数与上下架状态。"
+                description="管理充值包与周期套餐：价格、余额、赠送余额、有效天数与上下架状态。"
                 extra={
                     <Space>
                         <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>
@@ -265,7 +308,7 @@ export function PlansPage() {
             />
 
             <Modal
-                title={editing ? `编辑套餐 · ${editing.name}` : "新增套餐"}
+                title={editing ? `编辑套餐 · ${currencyText(editing.name, exchangePerYuan)}` : "新增套餐"}
                 width={600}
                 open={modalOpen}
                 forceRender
@@ -295,7 +338,7 @@ export function PlansPage() {
                             rules={[{ required: true, message: "请输入套餐名称" }]}
                             style={{ flex: 1 }}
                         >
-                            <Input placeholder="例如：体验包 1000 积分" />
+                            <Input placeholder="例如：体验充值包" />
                         </Form.Item>
                     </Space>
 
@@ -306,29 +349,29 @@ export function PlansPage() {
                         <Form.Item
                             label="价格（元）"
                             name="priceAmount"
-                            rules={[{ required: true, message: "请输入价格" }]}
+                            rules={[{ required: true, message: "请输入价格" }, NON_NEGATIVE_AMOUNT_RULE]}
                             style={{ flex: 1 }}
                         >
-                            <InputNumber min={0} precision={2} step={1} style={{ width: "100%" }} prefix="¥" />
+                            <InputNumber<string> stringMode step="1" style={{ width: "100%" }} prefix="¥" />
                         </Form.Item>
                     </Space>
 
                     <Space size={16} style={{ display: "flex" }} align="start">
                         <Form.Item
-                            label="积分"
+                            label="余额（元）"
                             name="credits"
-                            rules={[{ required: true, message: "请输入积分" }]}
+                            rules={[{ required: true, message: "请输入余额金额" }, NON_NEGATIVE_AMOUNT_RULE]}
                             style={{ flex: 1 }}
                         >
-                            <InputNumber min={0} step={100} style={{ width: "100%" }} />
+                            <InputNumber<string> stringMode step="0.01" style={{ width: "100%" }} prefix="¥" />
                         </Form.Item>
                         <Form.Item
-                            label="赠送积分"
+                            label="赠送余额（元）"
                             name="bonusCredits"
-                            rules={[{ required: true, message: "请输入赠送积分" }]}
+                            rules={[{ required: true, message: "请输入赠送余额" }, NON_NEGATIVE_AMOUNT_RULE]}
                             style={{ flex: 1 }}
                         >
-                            <InputNumber min={0} step={100} style={{ width: "100%" }} />
+                            <InputNumber<string> stringMode step="0.01" style={{ width: "100%" }} prefix="¥" />
                         </Form.Item>
                         <Form.Item
                             label="有效天数"

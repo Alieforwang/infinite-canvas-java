@@ -7,6 +7,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { getAccount, listPlans, listTransactions, redeem, type AccountView, type PlanView, type TransactionView } from "@/api/account";
 import { changePassword, updateProfile } from "@/api/auth";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { useCurrency, usePublicSettingsStore } from "@/stores/use-public-settings-store";
 
 const BIZ_LABEL: Record<string, string> = {
     HOLD: "预扣",
@@ -22,6 +23,7 @@ const BIZ_LABEL: Record<string, string> = {
 
 export default function AccountPage() {
     const { message } = App.useApp();
+    const { formatCredits, formatYuan, currencyText } = useCurrency();
     const user = useAuthStore((state) => state.user);
     const loadMe = useAuthStore((state) => state.loadMe);
     const available = useAuthStore((state) => state.credits.available);
@@ -47,7 +49,10 @@ export default function AccountPage() {
         const request = ++accountRequest.current;
         try {
             const data = await getAccount();
-            if (request === accountRequest.current) setAccount(data);
+            if (request === accountRequest.current) {
+                usePublicSettingsStore.getState().applyAccountRate(data.exchangePerYuan);
+                setAccount(data);
+            }
         } catch (error) {
             if (request === accountRequest.current) message.error(error instanceof Error ? error.message : "账户加载失败");
         }
@@ -92,7 +97,7 @@ export default function AccountPage() {
         }
         try {
             const result = await redeem(redeemCode.trim());
-            message.success(`兑换成功：+${result.credits} 积分${result.planName ? `（${result.planName}）` : ""}`);
+            message.success(`兑换成功：${formatCredits(result.credits, { signed: true })}${result.planName ? `（${currencyText(result.planName)}）` : ""}`);
             setRedeemCode("");
             setTxPage(1);
             await loadMe();
@@ -109,18 +114,17 @@ export default function AccountPage() {
             render: (value: string) => <Tag>{BIZ_LABEL[value] ?? value}</Tag>,
         },
         {
-            title: "变动",
+            title: "变动（元）",
             dataIndex: "amount",
             render: (value: number) => (
                 <span className={value >= 0 ? "text-emerald-600" : "text-rose-600"}>
-                    {value >= 0 ? "+" : ""}
-                    {value}
+                    {formatCredits(value, { signed: true })}
                 </span>
             ),
         },
-        { title: "余额", dataIndex: "balanceAfter" },
+        { title: "余额（元）", dataIndex: "balanceAfter", render: (value: number) => formatCredits(value) },
         { title: "关联任务", dataIndex: "taskNo", render: (value: string) => value ? <Link className="underline" to={`/video?task=${encodeURIComponent(value)}`}>{value}</Link> : "-" },
-        { title: "备注", dataIndex: "remark", render: (value: string) => value || "-" },
+        { title: "备注", dataIndex: "remark", render: (value: string) => currencyText(value) || "-" },
         { title: "时间", dataIndex: "createdAt", render: (value: string) => value?.replace("T", " ").slice(0, 19) || "-" },
     ];
 
@@ -173,9 +177,9 @@ export default function AccountPage() {
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {[
-                    { label: "可用积分", value: account?.available ?? 0, icon: <Wallet className="size-4" />, tone: "text-stone-900 dark:text-stone-100" },
-                    { label: "冻结积分", value: account?.frozen ?? 0, icon: <Sparkles className="size-4" />, tone: "text-amber-600" },
-                    { label: "累计消耗", value: account?.totalConsumed ?? 0, icon: <CheckCircle2 className="size-4" />, tone: "text-rose-600" },
+                    { label: "可用余额", value: account ? formatCredits(account.available) : "—", icon: <Wallet className="size-4" />, tone: "text-stone-900 dark:text-stone-100" },
+                    { label: "冻结金额", value: account ? formatCredits(account.frozen) : "—", icon: <Sparkles className="size-4" />, tone: "text-amber-600" },
+                    { label: "累计消费", value: account ? formatCredits(account.totalConsumed) : "—", icon: <CheckCircle2 className="size-4" />, tone: "text-rose-600" },
                     { label: "进行中任务", value: `${account?.running ?? 0}/${account?.concurrencyLimit ?? 2}`, icon: <Ticket className="size-4" />, tone: "text-sky-600" },
                 ].map((item) => (
                     <Card key={item.label} className="!rounded-xl">
@@ -189,7 +193,7 @@ export default function AccountPage() {
             </div>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-                <Card title="积分流水" className="!rounded-xl">
+                <Card title="资金流水（人民币）" className="!rounded-xl">
                     <Table<TransactionView>
                         rowKey="id"
                         size="small"
@@ -222,10 +226,10 @@ export default function AccountPage() {
                     <Card title="套餐与充值" className="!rounded-xl">
                         {account?.currentPlan ? (
                             <Descriptions size="small" column={1} className="mb-3">
-                                <Descriptions.Item label="当前套餐">{account.currentPlan.name}</Descriptions.Item>
+                                <Descriptions.Item label="当前套餐">{currencyText(account.currentPlan.name)}</Descriptions.Item>
                                 <Descriptions.Item label="到期时间">{account.currentPlan.expiresAt?.slice(0, 10) ?? "永久"}</Descriptions.Item>
                                 <Descriptions.Item label="套餐额度">
-                                    {account.currentPlan.creditsUsed ?? 0}/{account.currentPlan.creditsTotal ?? 0}
+                                    已用 {formatCredits(account.currentPlan.creditsUsed ?? 0)} / 总额 {formatCredits(account.currentPlan.creditsTotal ?? 0)}
                                 </Descriptions.Item>
                             </Descriptions>
                         ) : null}
@@ -233,11 +237,11 @@ export default function AccountPage() {
                             {plans.map((plan) => (
                                 <div key={plan.id} className="rounded-lg border border-stone-200 p-3 text-sm dark:border-stone-800">
                                     <div className="flex items-center justify-between">
-                                        <span className="font-medium text-stone-800 dark:text-stone-100">{plan.name}</span>
-                                        <span className="text-xs text-stone-400">¥{Number(plan.priceAmount).toFixed(2)}</span>
+                                        <span className="font-medium text-stone-800 dark:text-stone-100">{currencyText(plan.name)}</span>
+                                        <span className="text-xs text-stone-400">{formatYuan(plan.priceAmount)}</span>
                                     </div>
                                     <p className="mt-1 text-xs text-stone-500">
-                                        {plan.credits} 积分
+                                        到账余额 {formatCredits(plan.credits)}
                                         {plan.validDays > 0 ? ` · ${plan.validDays} 天有效` : " · 永久有效"}
                                     </p>
                                 </div>

@@ -114,6 +114,19 @@ export interface ChannelTestResult {
 
 // ---------------- 模型 ----------------
 
+export type ModelCapability = "llm" | "image" | "video" | "unknown";
+
+export interface ModelClassificationSuggestion {
+    id: number;
+    currentCapability: ModelCapability;
+    suggestedCapability: Exclude<ModelCapability, "unknown">;
+    upstreamModel: string;
+    modelKey: string;
+}
+
+export interface ModelClassificationApplyResult {
+    updated: number;
+}
 export interface VideoModel {
     id: number;
     channelId: number;
@@ -122,7 +135,7 @@ export interface VideoModel {
     displayName: string;
     modelKey: string;
     routeWeight: number;
-    capability: string;
+    capability: ModelCapability;
     pricingRules: string;
     enabled: number;
     sort: number;
@@ -140,6 +153,10 @@ export interface VideoModel {
     supportsReferenceImages: number;
     maxReferenceImages: number;
     createdAt: string;
+    costPerUnit: number | null;
+    costQuotaType: number | null;
+    costSyncedAt: string | null;
+    currentLoad: number | null;
 }
 
 export interface ModelPayload {
@@ -148,7 +165,7 @@ export interface ModelPayload {
     displayName: string;
     modelKey: string;
     routeWeight: number;
-    capability: string;
+    capability: ModelCapability;
     pricingRules: string;
     creditsPerSecond: number;
     resolutionFactors: string;
@@ -326,7 +343,34 @@ export interface AdminTaskDetail extends AdminTaskRow {
     transactions: TaskTransaction[];
 }
 
-// ---------------- 设置 ----------------
+export interface UpstreamPrice {
+    upstreamModel: string;
+    quotaType: number;
+    modelPrice: number | null;
+    groupName: string;
+    groupRatio: number | null;
+    groupCost: number | null;
+    lastSynced: string | null;
+    status: "fresh" | "stale" | "no_cost";
+}
+
+export interface UpstreamPriceSnapshot {
+    source: string;
+    currency: string;
+    currencyVerification: string;
+    syncedAt: string | null;
+    pricingVersion: string | null;
+    stale: boolean;
+    status: "fresh" | "stale" | "no_cost";
+    prices: UpstreamPrice[];
+}
+
+export interface PublicSettings {
+    exchangePerYuan: number;
+    currency: "CNY";
+    currencyUnit: "元";
+}
+
 
 export interface SettingItem {
     key: string;

@@ -72,6 +72,11 @@ public class ImageTaskService {
         Prepared prepared = tx.execute(status -> prepare(userId, cmd, refs, key, hash, ip, requestId));
         if (!prepared.created()) return views.toView(prepared.task());
         VideoTask task = prepared.task();
+        VideoModel currentRoute = models.selectById(prepared.route().getId());
+        if (currentRoute == null || !"image".equals(currentRoute.getCapability())) {
+            tx.executeWithoutResult(status -> fail(task, "MODEL_CAPABILITY_CHANGED", "图片模型类型已变更，金额已退回"));
+            return get(userId, task.getTaskNo());
+        }
         Image image;
         try {
             List<UpstreamClient.FilePart> parts = new ArrayList<>();
@@ -89,14 +94,14 @@ public class ImageTaskService {
             image = decode(result, task);
         } catch (Exception ex) {
             String code = ex instanceof UpstreamException upstream ? upstream.getCode() : "UPSTREAM_INVALID_IMAGE";
-            String message = ex instanceof UpstreamException ? ex.getMessage() : "图片生成或保存失败，积分已退回";
+            String message = ex instanceof UpstreamException ? ex.getMessage() : "图片生成或保存失败，金额已退回";
             tx.executeWithoutResult(status -> fail(task, code, message));
             return get(userId, task.getTaskNo());
         }
         try {
             tx.executeWithoutResult(status -> complete(task, image));
         } catch (Exception ex) {
-            tx.executeWithoutResult(status -> fail(task, "IMAGE_STORAGE_ERROR", "图片保存或结算失败，积分已退回"));
+            tx.executeWithoutResult(status -> fail(task, "IMAGE_STORAGE_ERROR", "图片保存或结算失败，金额已退回"));
         }
         return get(userId, task.getTaskNo());
     }
@@ -139,12 +144,14 @@ public class ImageTaskService {
                     && channel != null && Integer.valueOf(1).equals(channel.getEnabled())
                     && stringList(channel.getCapabilities()).contains("image")
                     && (route.getRouteWeight() == null || route.getRouteWeight() > 0)
+                    && (stringList(route.getSupportedSizes()).isEmpty() || stringList(route.getSupportedSizes()).contains(cmd.size()))
                     && pricing.supportsImageSpecification(route, cmd.size()) && supportsReferences(route, refs.size())) {
                 available.add(route);
             }
         }
         if (available.isEmpty()) throw invalid("当前图片规格暂无可用渠道线路");
-        VideoModel route = WeightedRouteSelector.select(available);
+        long credits = pricing.quoteImage(model, cmd.size());
+        VideoModel route = new CostAwareRouteSelector(settings, channels, tasks).select(available, credits, 1);
         LocalDateTime now = now();
         VideoTask task = new VideoTask();
         task.setTaskNo("img_" + Ulid.next().substring(4));
@@ -152,7 +159,6 @@ public class ImageTaskService {
         task.setStatus("RUNNING"); task.setProgress(0); task.setRequestHash(hash);
         task.setIdempotencyKey(key == null || key.isBlank() ? null : key);
         task.setPrompt(cmd.prompt());
-        long credits = pricing.quoteImage(model, cmd.size());
         task.setParamsJson(serialize(Map.of("capability", "image", "modelKey", cmd.modelKey().trim(),
                 "size", cmd.size(), "pricing", Map.of("credits", credits))));
         task.setReferencesJson(serialize(Map.of("fileNos", refs)));
@@ -163,7 +169,8 @@ public class ImageTaskService {
         tasks.insert(task);
         billing.hold(userId, task.getId(), task.getTaskNo(), credits, requestId);
         task.setHeldCredits(credits); tasks.updateById(task);
-        event(task, "", "RUNNING", "图片任务创建并预扣积分");
+        models.incrementLoad(route.getId());
+        event(task, "", "RUNNING", "图片任务创建并预扣金额");
         return new Prepared(task, channels.selectById(route.getChannelId()), route, true);
     }
 
@@ -179,10 +186,11 @@ public class ImageTaskService {
         if (fresh == null || !"RUNNING".equals(fresh.getStatus())) return;
         FileObject file = storage.writeBytes(task.getUserId(), image.bytes(), image.type(), "IMAGE_RESULT",
                 task.getTaskNo() + "." + extension(image.type()), task.getId());
+        if (tasks.finalizeSuccess(task.getId(), file.getId(), now()) != 1) return;
         file.setWidth(image.width()); file.setHeight(image.height()); file.setRefCount(1);
         files.updateById(file);
-        if (tasks.finalizeSuccess(task.getId(), file.getId(), now()) != 1
-                || !billing.settle(task.getUserId(), task.getId(), task.getTaskNo(), task.getHeldCredits(), task.getHeldCredits())) {
+        models.decrementLoad(task.getModelId());
+        if (!billing.settle(task.getUserId(), task.getId(), task.getTaskNo(), task.getHeldCredits(), task.getHeldCredits())) {
             throw new IllegalStateException("图片任务结算失败");
         }
         event(task, "RUNNING", "SUCCEEDED", "图片已保存并结算");
@@ -191,6 +199,7 @@ public class ImageTaskService {
     private void fail(VideoTask task, String code, String message) {
         billing.lockAccount(task.getUserId());
         if (tasks.failActive(task.getId(), "FAILED", code, message, now(), List.of("RUNNING")) == 1) {
+            models.decrementLoad(task.getModelId());
             if (!billing.refund(task.getUserId(), task.getId(), task.getTaskNo(), task.getHeldCredits(), "图片任务失败退款")) {
                 throw new IllegalStateException("图片任务退款失败");
             }
@@ -203,7 +212,7 @@ public class ImageTaskService {
     public void expireInterruptedTasks() {
         for (VideoTask task : tasks.selectExpiredImages(now(), 100)) {
             try {
-                tx.executeWithoutResult(status -> fail(task, "IMAGE_TIMEOUT", "图片任务超时，积分已退回"));
+                tx.executeWithoutResult(status -> fail(task, "IMAGE_TIMEOUT", "图片任务超时，金额已退回"));
             } catch (Exception ex) {
                 log.error("image task expiry failed task={}", task.getTaskNo(), ex);
             }

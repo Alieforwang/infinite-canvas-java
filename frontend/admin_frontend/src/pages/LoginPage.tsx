@@ -55,7 +55,7 @@ export function LoginPage() {
                         管理后台
                     </h1>
                     <p className="login-hero__desc">
-                        统一管理渠道与模型、用户积分、套餐与兑换码，实时查看生成任务与平台运行指标。
+                        统一管理渠道与模型、人民币余额、套餐与兑换码，实时查看生成任务与平台运行指标。
                     </p>
                 </div>
                 <div className="login-hero__footer">

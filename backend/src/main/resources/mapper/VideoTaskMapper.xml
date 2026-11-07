@@ -228,6 +228,14 @@
         SELECT COUNT(*) FROM video_task
     </select>
 
+    <select id="countByModelId" resultType="long">
+        SELECT COUNT(*) FROM video_task WHERE model_id = #{modelId}
+    </select>
+
+    <select id="countByChannelId" resultType="long">
+        SELECT COUNT(*) FROM video_task WHERE channel_id = #{channelId}
+    </select>
+
     <!-- 进行中任务数（活动状态，供后台概览「运行中」使用） -->
     <select id="countRunning" resultType="long">
         SELECT COUNT(*) FROM video_task
@@ -268,6 +276,18 @@
     <select id="countActiveByUser" resultType="long">
         SELECT COUNT(*) FROM video_task
         WHERE user_id = #{userId}
+          AND status IN (<include refid="Active_Status_Values"/>)
+    </select>
+
+    <select id="countActiveByChannel" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE channel_id = #{channelId}
+          AND status IN (<include refid="Active_Status_Values"/>)
+    </select>
+
+    <select id="countActiveByModel" resultType="long">
+        SELECT COUNT(*) FROM video_task
+        WHERE model_id = #{modelId}
           AND status IN (<include refid="Active_Status_Values"/>)
     </select>
 

@@ -6,9 +6,11 @@ import com.infinitecanvas.common.BizException;
 import com.infinitecanvas.common.ErrorCode;
 import com.infinitecanvas.dto.AdminDtos;
 import com.infinitecanvas.entity.Channel;
+import com.infinitecanvas.entity.VideoModel;
 import com.infinitecanvas.gateway.UpstreamClient;
 import com.infinitecanvas.mapper.ChannelMapper;
 import com.infinitecanvas.mapper.VideoModelMapper;
+import com.infinitecanvas.mapper.VideoTaskMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,23 +18,27 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class ChannelService {
 
     private final ChannelMapper channelMapper;
     private final VideoModelMapper modelMapper;
+    private final VideoTaskMapper taskMapper;
     private final CryptoService cryptoService;
     private final BaseUrlNormalizer baseUrlNormalizer;
     private final SsrfGuard ssrfGuard;
     private final UpstreamClient upstreamClient;
     private final ObjectMapper objectMapper;
 
-    public ChannelService(ChannelMapper channelMapper, VideoModelMapper modelMapper, CryptoService cryptoService,
+    public ChannelService(ChannelMapper channelMapper, VideoModelMapper modelMapper, VideoTaskMapper taskMapper,
+                          CryptoService cryptoService,
                           BaseUrlNormalizer baseUrlNormalizer, SsrfGuard ssrfGuard, UpstreamClient upstreamClient,
                           ObjectMapper objectMapper) {
         this.channelMapper = channelMapper;
         this.modelMapper = modelMapper;
+        this.taskMapper = taskMapper;
         this.cryptoService = cryptoService;
         this.baseUrlNormalizer = baseUrlNormalizer;
         this.ssrfGuard = ssrfGuard;
@@ -83,7 +89,9 @@ public class ChannelService {
 
     @Transactional
     public AdminDtos.ChannelView update(Long id, AdminDtos.ChannelRequest request, Long adminId) {
-        Channel channel = require(id);
+        Channel channel = channelMapper.selectByIdForUpdate(id);
+        if (channel == null) throw new BizException("CHANNEL_40401", "渠道不存在", null, 404);
+        ChannelCostSource previousSource = ChannelCostSource.of(channel);
         if (request.name() != null && !request.name().isBlank()) {
             channel.setName(request.name().trim());
         }
@@ -123,19 +131,21 @@ public class ChannelService {
             channel.setEnabled(request.enabled() ? 1 : 0);
         }
         channelMapper.updateById(channel);
+        if (!previousSource.equals(ChannelCostSource.of(channel))) {
+            modelMapper.clearCostsByChannel(id);
+        }
         int modelCount = (int) modelMapper.countByChannelId(channel.getId());
         return toView(channel, modelCount);
     }
 
-    /** Delete if no model references it, otherwise disable. */
     @Transactional
     public void delete(Long id) {
-        Channel channel = require(id);
-        long modelCount = modelMapper.countByChannelId(id);
-        if (modelCount > 0) {
-            channel.setEnabled(0);
-            channelMapper.updateById(channel);
-            throw new BizException("CHANNEL_40901", "渠道下仍有模型，已改为停用", null, 409);
+        require(id);
+        if (modelMapper.countByChannelId(id) > 0) {
+            throw new BizException("CHANNEL_40901", "渠道下仍有模型，无法删除；请先删除模型或在编辑中停用该渠道", null, 409);
+        }
+        if (taskMapper.countByChannelId(id) > 0) {
+            throw new BizException("CHANNEL_40901", "渠道已有历史任务，无法删除；请在编辑中停用该渠道", null, 409);
         }
         channelMapper.deleteById(id);
     }
@@ -149,29 +159,84 @@ public class ChannelService {
             channel.setLastTestAt(LocalDateTime.now());
             channel.setLastTestOk(true);
             channel.setLastTestMessage("ok, models=" + models.size());
-            channelMapper.updateById(channel);
+            channelMapper.updateTestResult(channel);
             return new AdminDtos.ChannelTestResult(true, latency, models, "连接成功");
         } catch (Exception ex) {
             long latency = System.currentTimeMillis() - start;
             channel.setLastTestAt(LocalDateTime.now());
             channel.setLastTestOk(false);
             channel.setLastTestMessage(ex.getMessage() == null ? "failed" : ex.getMessage().substring(0, Math.min(400, ex.getMessage().length())));
-            channelMapper.updateById(channel);
+            channelMapper.updateTestResult(channel);
             return new AdminDtos.ChannelTestResult(false, latency, List.of(), "连接失败：" + channel.getLastTestMessage());
         }
     }
 
+    @Transactional
     public AdminDtos.ChannelTestResult syncModels(Long id, String modelsUrl) {
         Channel channel = require(id);
         long start = System.currentTimeMillis();
+        final List<UpstreamClient.DiscoveredModel> discovered;
         try {
-            List<String> models = upstreamClient.listModels(channel, modelsUrl);
-            return new AdminDtos.ChannelTestResult(true, System.currentTimeMillis() - start, models, "模型列表同步成功");
+            discovered = upstreamClient.discoverModels(channel, modelsUrl);
         } catch (Exception ex) {
             String detail = ex.getMessage() == null ? "failed" : ex.getMessage();
             return new AdminDtos.ChannelTestResult(false, System.currentTimeMillis() - start, List.of(),
                     "模型列表同步失败：" + detail.substring(0, Math.min(400, detail.length())));
         }
+        // Lock only after the upstream response, so concurrent sync requests cannot insert duplicates.
+        Channel locked = channelMapper.selectByIdForUpdate(id);
+        if (locked == null) throw new BizException("CHANNEL_40401", "渠道不存在", null, 404);
+        channel = locked;
+        int imported = 0;
+        for (UpstreamClient.DiscoveredModel entry : discovered) {
+            if (entry == null || entry.id() == null || entry.id().isBlank()) continue;
+            String name = entry.id().trim();
+            if (name.length() > 128) continue;
+            if (modelMapper.selectByChannelAndUpstream(channel.getId(), name) != null) continue;
+            VideoModel model = new VideoModel();
+            applyDiscoveredDefaults(model, channel, name, entry.capability());
+            VideoModel canonical = modelMapper.selectCanonicalByModelKeyForUpdate(name, model.getCapability());
+            if (canonical != null) {
+                model.setModelKey(canonical.getModelKey());
+                model.setDisplayName(canonical.getDisplayName());
+                ModelService.copyPricing(canonical, model);
+            }
+            modelMapper.insert(model);
+            imported++;
+        }
+        return new AdminDtos.ChannelTestResult(true, System.currentTimeMillis() - start,
+                discovered.stream().filter(java.util.Objects::nonNull).map(UpstreamClient.DiscoveredModel::id).toList(),
+                "模型列表同步成功，新增线路 " + imported + " 条");
+    }
+
+    private void applyDiscoveredDefaults(VideoModel model, Channel channel, String upstreamModel, String discoveredCapability) {
+        String capability = List.of("llm", "image", "video", "unknown").contains(discoveredCapability == null ? "" : discoveredCapability)
+                ? discoveredCapability : "unknown";
+        boolean image = "image".equals(capability);
+        boolean video = "video".equals(capability);
+        model.setChannelId(channel.getId());
+        model.setModelKey(upstreamModel);
+        model.setUpstreamModel(upstreamModel);
+        model.setDisplayName(upstreamModel);
+        model.setCapability(capability);
+        model.setRouteWeight(100);
+        model.setEnabled("unknown".equals(capability) ? 0 : 1);
+        model.setSort(0);
+        model.setCreditsPerSecond(image || video ? new java.math.BigDecimal("10") : java.math.BigDecimal.ZERO);
+        model.setPricingRules(image ? "[{\"resolution\":\"1024x1024\",\"credits\":10}]"
+                : video ? "[{\"resolution\":\"720p\",\"seconds\":8,\"credits\":80}]" : "[]");
+        model.setResolutionFactors(video ? "{\"720p\":1.0}" : "{}");
+        model.setResolutionDefault(image ? "1024x1024" : video ? "720p" : "");
+        model.setAudioFactor(java.math.BigDecimal.ONE);
+        model.setMinChargeCredits(1L);
+        model.setSupportedSeconds(video ? "[\"8\"]" : "[]");
+        model.setSupportedSizes(image ? "[\"1024x1024\"]" : video ? "[\"1280x720\",\"720x1280\"]" : "[]");
+        model.setSupportsAudio(0);
+        model.setSupportsWatermark(0);
+        model.setSupportsFirstLastFrame(0);
+        model.setSupportsReferenceImages(image || video ? 1 : 0);
+        model.setMaxReferenceImages(image || video ? 1 : 0);
+        model.setCurrentLoad(0);
     }
 
     public AdminDtos.ChannelView toView(Channel channel, int modelCount) {
@@ -210,8 +275,8 @@ public class ChannelService {
         }
         List<String> normalized = new ArrayList<>();
         for (String capability : capabilities) {
-            if (!"image".equals(capability) && !"video".equals(capability)) {
-                throw new BizException(ErrorCode.VALID_40001, "渠道能力仅支持 image 或 video");
+            if (!"llm".equals(capability) && !"image".equals(capability) && !"video".equals(capability)) {
+                throw new BizException(ErrorCode.VALID_40001, "渠道能力仅支持 llm、image 或 video");
             }
             if (!normalized.contains(capability)) {
                 normalized.add(capability);

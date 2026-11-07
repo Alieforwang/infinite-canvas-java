@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     AutoComplete,
     Button,
@@ -6,6 +6,7 @@ import {
     Form,
     Input,
     InputNumber,
+    Modal,
     Popconfirm,
     Row,
     Col,
@@ -24,13 +25,33 @@ import { Ban, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { adminApi } from "../api/admin";
 import { PageHead } from "../components/PageHead";
 import { useFeedback } from "../lib/feedback";
-import { parseJsonList } from "../lib/format";
-import type { Channel, ModelPayload, VideoModel } from "../types";
+import { creditsToYuan, formatYuan, modelCapabilityLabel, parseJsonList, yuanToCredits } from "../lib/format";
+import { useCurrency } from "../lib/currency";
+import { modelMoneyRulesUnchanged, unchangedModelRuleUnits, unchangedModelUnits } from "../lib/model-money";
+import { buildLogicalPricingPlan, isRouteCostFresh, logicalModelKey } from "../lib/pricing";
+import type { Channel, ModelCapability, ModelClassificationSuggestion, ModelPayload, UpstreamPriceSnapshot, VideoModel } from "../types";
+
+// Fields rendered inside the collapsed "兼容高级配置" panel; expand it when validation points there.
+const ADVANCED_PANEL_FIELDS = new Set([
+    "creditsPerSecond",
+    "resolutionFactors",
+    "resolutionDefault",
+    "audioFactor",
+    "minChargeCredits",
+    "supportedSeconds",
+    "supportedSizes",
+    "supportedRatios",
+    "supportsAudio",
+    "supportsWatermark",
+    "supportsFirstLastFrame",
+    "supportsReferenceImages",
+    "maxReferenceImages",
+]);
 
 interface PricingRuleForm {
     resolution: string;
     seconds?: number;
-    credits: number;
+    credits: number | string;
 }
 
 interface ModelFormValues {
@@ -39,13 +60,13 @@ interface ModelFormValues {
     displayName: string;
     modelKey: string;
     routeWeight: number;
-    capability: string;
+    capability: ModelCapability;
     pricingRules: PricingRuleForm[];
-    creditsPerSecond: number;
+    creditsPerSecond: number | string;
     resolutionFactors: string;
     resolutionDefault: string;
     audioFactor: number;
-    minChargeCredits: number;
+    minChargeCredits: number | string;
     supportedSeconds: string;
     supportedSizes: string;
     supportedRatios: string;
@@ -64,8 +85,10 @@ const DEFAULT_SUPPORTED_SIZES = '["1280x720","720x1280"]';
 const DEFAULT_SUPPORTED_RATIOS = '["16:9","9:16","1:1"]';
 
 const CAPABILITY_OPTIONS = [
+    { value: "llm", label: "大语言模型" },
     { value: "image", label: "图片生成" },
     { value: "video", label: "视频生成" },
+    { value: "unknown", label: "待审核/未分类" },
 ];
 
 const IMAGE_SPEC_OPTIONS = [
@@ -83,9 +106,9 @@ const VIDEO_SPEC_OPTIONS = [
 ];
 
 function defaultPricingRules(capability: string): PricingRuleForm[] {
-    return capability === "image"
-        ? [{ resolution: "1024x1024", credits: 10 }]
-        : [{ resolution: "720p", seconds: 8, credits: 80 }];
+    if (capability === "image") return [{ resolution: "1024x1024", credits: 10 }];
+    if (capability === "video") return [{ resolution: "720p", seconds: 8, credits: 80 }];
+    return [];
 }
 
 function parsePricingRules(text: string | null | undefined, capability: string): PricingRuleForm[] {
@@ -102,7 +125,7 @@ function parsePricingRules(text: string | null | undefined, capability: string):
             const resolution = typeof candidate.resolution === "string" ? candidate.resolution.trim() : "";
             const credits = Number(candidate.credits);
             const seconds = Number(candidate.seconds);
-            if (!resolution || !Number.isFinite(credits) || credits <= 0) {
+            if (!resolution || candidate.credits == null || String(candidate.credits).trim() === "" || !Number.isFinite(credits) || credits < 0) {
                 return [];
             }
             if (capability === "video" && (!Number.isFinite(seconds) || seconds <= 0)) {
@@ -116,11 +139,11 @@ function parsePricingRules(text: string | null | undefined, capability: string):
     }
 }
 
-function pricingSummary(text: string | null | undefined, capability: string): string {
+function pricingSummary(text: string | null | undefined, capability: string, exchangePerYuan: number): string {
     return parsePricingRules(text, capability)
         .map((rule) => capability === "video"
-            ? `${rule.resolution} / ${rule.seconds}s · ${rule.credits} 积分`
-            : `${rule.resolution} · ${rule.credits} 积分/张`)
+            ? `${rule.resolution} / ${rule.seconds}s · ${formatYuan(creditsToYuan(rule.credits, exchangePerYuan))}`
+            : `${rule.resolution} · ${formatYuan(creditsToYuan(rule.credits, exchangePerYuan))}/张`)
         .join("；");
 }
 
@@ -158,7 +181,8 @@ const validateJsonArray: FormRule = {
     },
 };
 
-function prettyJsonText(text: string): string {
+function prettyJsonText(text: string | null | undefined, emptyValue = "[]"): string {
+    if (text == null || !text.trim()) return emptyValue;
     try {
         return JSON.stringify(JSON.parse(text), null, 2);
     } catch {
@@ -166,7 +190,20 @@ function prettyJsonText(text: string): string {
     }
 }
 
-function modelPayloadFromValues(values: ModelFormValues): ModelPayload {
+function pricingRulesToYuan(rules: PricingRuleForm[], exchangePerYuan: number): PricingRuleForm[] {
+    return rules.map((rule) => ({ ...rule, credits: creditsToYuan(rule.credits, exchangePerYuan) ?? 0 }));
+}
+
+type OriginalModelMoney = Pick<VideoModel, "capability" | "pricingRules" | "creditsPerSecond" | "minChargeCredits">;
+
+export function modelPayloadFromValues(values: ModelFormValues, exchangePerYuan: number, original?: OriginalModelMoney): ModelPayload {
+    const originalRules = original ? parsePricingRules(original.pricingRules, original.capability || "video") : [];
+    const creditsForRule = (rule: PricingRuleForm): number =>
+        unchangedModelRuleUnits(rule, originalRules, exchangePerYuan) ?? yuanToCredits(rule.credits, exchangePerYuan);
+    const creditsPerSecond = unchangedModelUnits(values.creditsPerSecond, original ? Number(original.creditsPerSecond) : undefined, exchangePerYuan)
+        ?? yuanToCredits(values.creditsPerSecond, exchangePerYuan);
+    const minChargeCredits = unchangedModelUnits(values.minChargeCredits, original ? Number(original.minChargeCredits) : undefined, exchangePerYuan)
+        ?? yuanToCredits(values.minChargeCredits, exchangePerYuan);
     return {
         channelId: values.channelId,
         upstreamModel: values.upstreamModel.trim(),
@@ -174,16 +211,18 @@ function modelPayloadFromValues(values: ModelFormValues): ModelPayload {
         modelKey: values.modelKey.trim(),
         routeWeight: values.routeWeight,
         capability: values.capability,
-        pricingRules: JSON.stringify(values.pricingRules.map((rule) => ({
-            resolution: rule.resolution.trim(),
-            ...(values.capability === "video" ? { seconds: rule.seconds } : {}),
-            credits: rule.credits,
-        }))),
-        creditsPerSecond: values.creditsPerSecond,
+        pricingRules: original && modelMoneyRulesUnchanged(values.pricingRules, originalRules, exchangePerYuan)
+            ? original.pricingRules
+            : JSON.stringify(values.pricingRules.map((rule) => ({
+                resolution: rule.resolution.trim(),
+                ...(values.capability === "video" ? { seconds: rule.seconds } : {}),
+                credits: creditsForRule(rule),
+            }))),
+        creditsPerSecond,
         resolutionFactors: values.resolutionFactors.trim(),
         resolutionDefault: values.capability === "image" ? values.pricingRules[0].resolution.trim() : values.resolutionDefault,
         audioFactor: values.audioFactor,
-        minChargeCredits: values.minChargeCredits,
+        minChargeCredits,
         supportedSeconds: values.capability === "image" ? "[]" : values.supportedSeconds.trim(),
         supportedSizes: values.capability === "image"
             ? JSON.stringify([...new Set(values.pricingRules.map((rule) => rule.resolution.trim()))]) : values.supportedSizes.trim(),
@@ -199,17 +238,32 @@ function modelPayloadFromValues(values: ModelFormValues): ModelPayload {
 }
 
 export function ModelsPage() {
+    const { exchangePerYuan, ready } = useCurrency();
     const { message, showApiError, showSuccess } = useFeedback();
     const [models, setModels] = useState<VideoModel[]>([]);
+    const [capabilityFilter, setCapabilityFilter] = useState<ModelCapability | "all">("all");
+    const [classificationPreview, setClassificationPreview] = useState<ModelClassificationSuggestion[]>([]);
+    const [classifying, setClassifying] = useState(false);
     const [channels, setChannels] = useState<Channel[]>([]);
     const [loading, setLoading] = useState(true);
     const [form] = Form.useForm<ModelFormValues>();
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [advancedOpen, setAdvancedOpen] = useState(false);
     const [editing, setEditing] = useState<VideoModel | null>(null);
+    const originalMoney = useRef<OriginalModelMoney | undefined>(undefined);
     const [saving, setSaving] = useState(false);
     const [deletingId, setDeletingId] = useState<number | null>(null);
     const [syncingModels, setSyncingModels] = useState(false);
     const [channelModels, setChannelModels] = useState<Record<string, string[]>>({});
+    const [pricingChannelId, setPricingChannelId] = useState<number | null>(null);
+    const [priceSnapshot, setPriceSnapshot] = useState<UpstreamPriceSnapshot | null>(null);
+    const [syncingPrices, setSyncingPrices] = useState(false);
+    const [applyingPrices, setApplyingPrices] = useState(false);
+    const [marginPercent, setMarginPercent] = useState(20);
+    const [marginFloorPercent, setMarginFloorPercent] = useState(10);
+    const [marginCeilingPercent, setMarginCeilingPercent] = useState(30);
+    const [costMaxAgeHours, setCostMaxAgeHours] = useState(24);
+    const settingsInitialized = useRef(false);
     const [modelsUrls, setModelsUrls] = useState<Record<number, string>>({});
     const channelId = Form.useWatch("channelId", form);
     const modelsUrl = modelsUrls[channelId] ?? "";
@@ -240,16 +294,61 @@ export function ModelsPage() {
     };
     const capability = Form.useWatch("capability", form) ?? "video";
     const pricingRules = Form.useWatch("pricingRules", form) ?? [];
-    const minChargeCredits = Form.useWatch("minChargeCredits", form) ?? 1;
-    const eligibleChannels = channels.filter((channel) =>
-        (channel.capabilities?.length ? channel.capabilities : ["video"]).includes(capability));
+    const minChargeCredits = Form.useWatch("minChargeCredits", form) ?? creditsToYuan(1, exchangePerYuan) ?? 0;
+    const isCreativeCapability = capability === "image" || capability === "video";
+    const originalRules = originalMoney.current ? parsePricingRules(originalMoney.current.pricingRules, originalMoney.current.capability || "video") : [];
+    const previewCharge = (rule: PricingRuleForm): string => {
+        try {
+            const price = unchangedModelRuleUnits(rule, originalRules, exchangePerYuan) ?? yuanToCredits(rule.credits, exchangePerYuan);
+            const minimum = unchangedModelUnits(minChargeCredits, originalMoney.current?.minChargeCredits, exchangePerYuan) ?? yuanToCredits(minChargeCredits, exchangePerYuan);
+            return formatYuan(creditsToYuan(Math.max(minimum, Math.ceil(price)), exchangePerYuan));
+        } catch { return "金额无效"; }
+    };
+    const nonnegativeMoney: FormRule = {
+        validator: async (_rule, value: unknown) => {
+            if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0) {
+                throw new Error("请输入不小于 0 的人民币金额");
+            }
+        },
+    };
+    const eligibleChannels = capability === "llm" || capability === "unknown"
+        ? channels
+        : channels.filter((channel) =>
+            (channel.capabilities?.length ? channel.capabilities : ["video"]).includes(capability));
+    const channelById = new Map(channels.map((channel) => [channel.id, channel]));
+    const isPricingRouteEligible = (route: VideoModel) => {
+        const channel = channelById.get(route.channelId);
+        const capabilities = channel?.capabilities?.length ? channel.capabilities : ["video"];
+        return route.enabled === 1 && Number(route.routeWeight) > 0
+            && channel?.enabled === 1 && capabilities.includes(route.capability);
+    };
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [modelList, channelList] = await Promise.all([adminApi.listModels(), adminApi.listChannels()]);
+            const [modelList, channelList, settings] = await Promise.all([
+                adminApi.listModels(), adminApi.listChannels(), adminApi.listSettings(),
+            ]);
             setModels(modelList);
             setChannels(channelList);
+            if (!settingsInitialized.current) {
+                const settingNumber = (key: string, fallback: number) => {
+                    const value = Number(settings.find((item) => item.key === key)?.value ?? fallback);
+                    return Number.isFinite(value) ? value : fallback;
+                };
+                const marginCeiling = Math.min(99.99, Math.max(0, settingNumber("pricing.margin_ceiling_percent", 30)));
+                const marginFloor = Math.min(marginCeiling, 99.99, Math.max(0, settingNumber("pricing.margin_floor_percent", 10)));
+                const targetMargin = Math.min(marginCeiling, Math.max(marginFloor, settingNumber("pricing.target_margin_percent", 20)));
+                setMarginPercent(targetMargin);
+                setMarginFloorPercent(marginFloor);
+                setMarginCeilingPercent(marginCeiling);
+                setCostMaxAgeHours(Math.min(8760, Math.max(1, Math.round(settingNumber("pricing.cost_max_age_hours", 24)))));
+                settingsInitialized.current = true;
+            }
+            setPricingChannelId((current) => current ?? channelList.find((item) => {
+                try { return new URL(item.normalizedBaseUrl).hostname.toLowerCase() === "duoyuanx.com"; }
+                catch { return false; }
+            })?.id ?? null);
         } catch (err) {
             showApiError(err);
         } finally {
@@ -261,17 +360,122 @@ export function ModelsPage() {
         void load();
     }, [load]);
 
+    useEffect(() => {
+        if (pricingChannelId == null) { setPriceSnapshot(null); return; }
+        let active = true;
+        setPriceSnapshot(null);
+        void adminApi.listUpstreamPrices(pricingChannelId).then((snapshot) => {
+            if (active) setPriceSnapshot(snapshot);
+        }).catch((err) => { if (active) showApiError(err); });
+        return () => { active = false; };
+    }, [pricingChannelId, showApiError]);
+
+    const refreshPrices = async () => {
+        if (pricingChannelId == null) return;
+        setSyncingPrices(true);
+        try {
+            const snapshot = await adminApi.syncUpstreamPrices(pricingChannelId);
+            setPriceSnapshot(snapshot);
+            await load();
+            message.success(`已同步 ${snapshot.prices.length} 条上游报价`);
+        } catch (err) {
+            showApiError(err);
+            try {
+                const previous = await adminApi.listUpstreamPrices(pricingChannelId);
+                setPriceSnapshot({ ...previous, stale: true, status: "stale" });
+            } catch { setPriceSnapshot((previous) => previous ? { ...previous, stale: true, status: "stale" } : null); }
+        } finally {
+            setSyncingPrices(false);
+        }
+    };
+
+    const pricingModels = models.filter((model) => model.capability === "image" || model.capability === "video");
+    const pricingPlan = buildLogicalPricingPlan(pricingModels, marginPercent, marginFloorPercent, Date.now(), costMaxAgeHours, isPricingRouteEligible);
+    const pricePlanByKey = new Map(pricingPlan.map((item) => [item.key, item]));
+    const applicablePrices = pricingPlan.filter((item) => item.suggestion.rules.length > 0);
+    const warningCount = applicablePrices.filter((item) => item.suggestion.warnings.length > 0).length;
+
+    const applySuggestedPrices = () => {
+        if (!applicablePrices.length || applyingPrices) return;
+        Modal.confirm({
+            title: `确认修改 ${applicablePrices.length} 个逻辑模型的客户售价？`,
+            content: `将按每个逻辑模型全部线路的最新余额成本计算：最低成本用于建议价，最高成本用于最低毛利风险提示。${warningCount ? `当前有 ${warningCount} 个逻辑模型存在未知、过期成本或最低毛利风险，请确认后继续。` : ""}`,
+            okText: "确认应用售价",
+            okButtonProps: { danger: true },
+            cancelText: "取消",
+            onOk: async () => {
+                setApplyingPrices(true);
+                let updated = 0;
+                try {
+                    for (const { model, suggestion } of applicablePrices) {
+                        await adminApi.updateModelPricing(model.id, JSON.stringify(suggestion.rules));
+                        updated++;
+                    }
+                    showSuccess(`已更新 ${updated} 个逻辑模型的客户售价`);
+                } catch (err) {
+                    showApiError(err);
+                    message.warning(`已更新 ${updated} 个逻辑模型，剩余未修改；请刷新后重新核对`);
+                } finally {
+                    setApplyingPrices(false);
+                    await load();
+                }
+            },
+        });
+    };
+
+    const filteredModels = capabilityFilter === "all"
+        ? models
+        : models.filter((model) => model.capability === capabilityFilter);
+
+    const previewClassifications = async () => {
+        setClassifying(true);
+        try {
+            const suggestions = await adminApi.previewModelClassifications();
+            setClassificationPreview(suggestions);
+            if (!suggestions.length) message.info("没有需要纠正的高置信模型分类");
+        } catch (err) {
+            showApiError(err);
+        } finally {
+            setClassifying(false);
+        }
+    };
+
+    const applyClassifications = () => {
+        if (!classificationPreview.length || classifying) return;
+        Modal.confirm({
+            title: `确认应用 ${classificationPreview.length} 条模型分类纠正？`,
+            content: "后端会校验每条模型的当前分类与身份快照；任何漂移都会整体拒绝，不会部分应用。",
+            okText: "确认批量应用",
+            cancelText: "取消",
+            onOk: async () => {
+                setClassifying(true);
+                try {
+                    const result = await adminApi.applyModelClassifications(classificationPreview);
+                    showSuccess(`已纠正 ${result.updated} 个模型分类`);
+                    setClassificationPreview([]);
+                    await load();
+                } catch (err) {
+                    showApiError(err);
+                    await load();
+                } finally {
+                    setClassifying(false);
+                }
+            },
+        });
+    };
+
     const applyDefaults = () => {
+        originalMoney.current = { capability: "video", pricingRules: JSON.stringify(defaultPricingRules("video")), creditsPerSecond: 10, minChargeCredits: 1 };
         form.resetFields();
         form.setFieldsValue({
             capability: "video",
-            pricingRules: defaultPricingRules("video"),
+            pricingRules: pricingRulesToYuan(defaultPricingRules("video"), exchangePerYuan),
             routeWeight: 100,
-            creditsPerSecond: 10,
+            creditsPerSecond: creditsToYuan(10, exchangePerYuan) ?? 0,
             resolutionFactors: DEFAULT_RESOLUTION_FACTORS,
             resolutionDefault: "720p",
             audioFactor: 1,
-            minChargeCredits: 1,
+            minChargeCredits: creditsToYuan(1, exchangePerYuan) ?? 0,
             supportedSeconds: DEFAULT_SUPPORTED_SECONDS,
             supportedSizes: DEFAULT_SUPPORTED_SIZES,
             supportedRatios: DEFAULT_SUPPORTED_RATIOS,
@@ -285,13 +489,41 @@ export function ModelsPage() {
         });
     };
 
-    const handleCapabilityChange = (nextCapability: string) => {
+    const handleCapabilityChange = (nextCapability: ModelCapability) => {
         const selectedChannelId = form.getFieldValue("channelId");
         const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
         const selectedCapabilities = selectedChannel?.capabilities?.length ? selectedChannel.capabilities : ["video"];
+        const creative = nextCapability === "image" || nextCapability === "video";
+        if (editing) {
+            if (creative && selectedChannel && !selectedCapabilities.includes(nextCapability)) {
+                form.setFieldsValue({ channelId: undefined });
+            }
+            return;
+        }
+        const rules = defaultPricingRules(nextCapability);
+        originalMoney.current = {
+            capability: nextCapability,
+            pricingRules: JSON.stringify(rules),
+            creditsPerSecond: !editing ? (creative ? 10 : 0) : originalMoney.current?.creditsPerSecond ?? 0,
+            minChargeCredits: !editing ? (creative ? 1 : 0) : originalMoney.current?.minChargeCredits ?? 0,
+        };
         form.setFieldsValue({
-            pricingRules: defaultPricingRules(nextCapability),
-            ...(!selectedChannel || selectedCapabilities.includes(nextCapability) ? {} : { channelId: undefined }),
+            pricingRules: pricingRulesToYuan(rules, exchangePerYuan),
+            ...(!editing ? {
+                creditsPerSecond: creditsToYuan(Number(originalMoney.current.creditsPerSecond), exchangePerYuan) ?? 0,
+                minChargeCredits: creditsToYuan(originalMoney.current.minChargeCredits, exchangePerYuan) ?? 0,
+                resolutionDefault: nextCapability === "video" ? "720p" : nextCapability === "image" ? "1024x1024" : "",
+                resolutionFactors: nextCapability === "video" ? DEFAULT_RESOLUTION_FACTORS : "{}",
+                supportedSeconds: nextCapability === "video" ? DEFAULT_SUPPORTED_SECONDS : "[]",
+                supportedSizes: nextCapability === "video" ? DEFAULT_SUPPORTED_SIZES : nextCapability === "image" ? '["1024x1024"]' : "[]",
+                supportedRatios: creative ? DEFAULT_SUPPORTED_RATIOS : "[]",
+                supportsAudio: false,
+                supportsWatermark: false,
+                supportsFirstLastFrame: false,
+                supportsReferenceImages: creative,
+                maxReferenceImages: creative ? 1 : 0,
+            } : {}),
+            ...(!creative || !selectedChannel || selectedCapabilities.includes(nextCapability) ? {} : { channelId: undefined }),
         });
     };
 
@@ -301,11 +533,14 @@ export function ModelsPage() {
             return;
         }
         setEditing(null);
+        setAdvancedOpen(false);
         applyDefaults();
         setDrawerOpen(true);
     };
 
-    const openEdit = (record: VideoModel) => {
+    const openEdit = (record: VideoModel, disable = false) => {
+        originalMoney.current = record;
+        setAdvancedOpen(false);
         setEditing(record);
         form.resetFields();
         form.setFieldsValue({
@@ -315,40 +550,52 @@ export function ModelsPage() {
             modelKey: record.modelKey || record.upstreamModel,
             routeWeight: Number(record.routeWeight) > 0 ? Number(record.routeWeight) : 100,
             capability: record.capability || "video",
-            pricingRules: parsePricingRules(record.pricingRules, record.capability || "video"),
-            creditsPerSecond: Number(record.creditsPerSecond),
-            resolutionFactors: prettyJsonText(record.resolutionFactors),
+            pricingRules: pricingRulesToYuan(parsePricingRules(record.pricingRules, record.capability || "video"), exchangePerYuan),
+            creditsPerSecond: creditsToYuan(Number(record.creditsPerSecond), exchangePerYuan) ?? 0,
+            resolutionFactors: prettyJsonText(record.resolutionFactors, "{}"),
             resolutionDefault: record.resolutionDefault,
             audioFactor: Number(record.audioFactor),
-            minChargeCredits: record.minChargeCredits,
+            minChargeCredits: creditsToYuan(record.minChargeCredits, exchangePerYuan) ?? 0,
             supportedSeconds: prettyJsonText(record.supportedSeconds),
             supportedSizes: prettyJsonText(record.supportedSizes),
+            // Admin views omit null JSON columns; the form requires valid JSON text, so normalize them.
             supportedRatios: prettyJsonText(record.supportedRatios),
             supportsAudio: record.supportsAudio === 1,
             supportsWatermark: record.supportsWatermark === 1,
             supportsFirstLastFrame: record.supportsFirstLastFrame === 1,
             supportsReferenceImages: record.supportsReferenceImages === 1,
             maxReferenceImages: record.maxReferenceImages,
-            enabled: record.enabled === 1,
+            enabled: disable ? false : record.enabled === 1,
             sort: record.sort,
         });
         setDrawerOpen(true);
     };
 
     const handleSubmit = async () => {
+        if (!ready) { showApiError(new Error("金额设置尚未就绪，请稍后重试")); return; }
         let values: ModelFormValues;
         try {
-            values = await form.validateFields();
-        } catch {
+            await form.validateFields();
+            values = form.getFieldsValue(true);
+        } catch (error) {
+            // Silent return made "保存" look dead when a hidden advanced field was invalid.
+            const first = (error as { errorFields?: Array<{ name: (string | number)[]; errors: string[] }> }).errorFields?.[0];
+            if (!first) {
+                message.warning("保存失败：请检查表单填写");
+                return;
+            }
+            if (ADVANCED_PANEL_FIELDS.has(String(first.name[0]))) setAdvancedOpen(true);
+            message.warning(`保存失败：${first.errors?.[0] || "请检查标红项"}`);
+            window.setTimeout(() => void form.scrollToField(first.name, { behavior: "smooth", block: "center" }), 200);
             return;
         }
         setSaving(true);
         try {
             if (editing) {
-                await adminApi.updateModel(editing.id, modelPayloadFromValues(values));
+                await adminApi.updateModel(editing.id, modelPayloadFromValues(values, exchangePerYuan, originalMoney.current));
                 showSuccess("模型已更新");
             } else {
-                await adminApi.createModel(modelPayloadFromValues(values));
+                await adminApi.createModel(modelPayloadFromValues(values, exchangePerYuan, originalMoney.current));
                 showSuccess("模型已创建");
             }
             setDrawerOpen(false);
@@ -360,16 +607,16 @@ export function ModelsPage() {
         }
     };
 
-    const handleDisable = async (record: VideoModel) => {
+    const handleDelete = async (record: VideoModel) => {
         setDeletingId(record.id);
         try {
             await adminApi.deleteModel(record.id);
-            showSuccess("模型已停用");
-            await load();
+            showSuccess("模型已删除");
         } catch (err) {
             showApiError(err);
         } finally {
             setDeletingId(null);
+            await load();
         }
     };
 
@@ -413,9 +660,10 @@ export function ModelsPage() {
             title: "媒体类型",
             dataIndex: "capability",
             width: 100,
-            render: (value: string) => (
-                <Tag color={value === "image" ? "cyan" : "blue"}>{value === "image" ? "图片" : "视频"}</Tag>
-            ),
+            render: (value: string) => {
+                const color = value === "image" ? "cyan" : value === "video" ? "blue" : value === "llm" ? "purple" : "gold";
+                return <Tag color={color}>{modelCapabilityLabel(value)}</Tag>;
+            },
         },
         {
             title: "规格定价",
@@ -423,7 +671,7 @@ export function ModelsPage() {
             width: 310,
             render: (value: string, record: VideoModel) => (
                 <Tooltip title={value}>
-                    <span>{pricingSummary(value, record.capability || "video")}</span>
+                    <span>{pricingSummary(value, record.capability || "video", exchangePerYuan)}</span>
                 </Tooltip>
             ),
         },
@@ -461,6 +709,33 @@ export function ModelsPage() {
                 );
             },
         },
+        {
+            title: "上游成本 / 建议售价",
+            key: "upstreamPrice",
+            width: 255,
+            render: (_: unknown, record: VideoModel) => {
+                if (record.capability !== "image" && record.capability !== "video") {
+                    return <Tag color="default">不参与自动定价</Tag>;
+                }
+                const plan = pricePlanByKey.get(logicalModelKey(record));
+                const costText = record.costPerUnit != null && record.costQuotaType != null
+                    ? `${formatYuan(creditsToYuan(Number(record.costPerUnit), exchangePerYuan))}/${record.costQuotaType === 2 ? "秒" : record.costQuotaType === 1 ? "次" : "未知单位"}`
+                    : "成本未知";
+                const routeEligible = isPricingRouteEligible(record);
+                const freshness = !routeEligible
+                    ? "当前不可路由"
+                    : record.costPerUnit == null || record.costQuotaType == null
+                        ? "成本未知"
+                        : isRouteCostFresh(record, Date.now(), costMaxAgeHours) ? "成本最新" : "成本已过期";
+                return <div>
+                    <div className="mono">{costText}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                        {freshness} · {plan?.suggestion.reason ?? plan?.suggestion.rules.map((item) => `${item.seconds ? `${item.seconds}s ` : ""}${formatYuan(creditsToYuan(item.credits, exchangePerYuan))}`).join("、") ?? "暂无建议"}
+                    </div>
+                    {plan?.suggestion.warnings.map((warning) => <div key={warning} style={{ color: "var(--ant-color-warning-text)", fontSize: 12 }}>{warning}</div>)}
+                </div>;
+            },
+        },
         { title: "排序", dataIndex: "sort", width: 72, align: "right" as const },
         {
             title: "启用",
@@ -471,24 +746,28 @@ export function ModelsPage() {
         {
             title: "操作",
             key: "actions",
-            width: 150,
+            width: 200,
             fixed: "right",
             render: (_: unknown, record: VideoModel) => (
                 <Space size={0}>
                     <Button type="link" size="small" icon={<Pencil size={14} />} onClick={() => openEdit(record)}>
                         编辑
                     </Button>
+                    {record.enabled === 1 && <Tooltip title="打开编辑并预选停用，保存后生效">
+                        <Button type="link" size="small" icon={<Ban size={14} />} onClick={() => openEdit(record, true)}>
+                            停用
+                        </Button>
+                    </Tooltip>}
                     <Popconfirm
-                        title="停用模型"
-                        description="删除操作等价于停用，停用后用户端不可见。"
-                        okText="确认停用"
+                        title="删除模型"
+                        description="无历史任务才能从数据库删除；有关联任务时请改用停用。"
+                        okText="确认删除"
                         okButtonProps={{ danger: true, loading: deletingId === record.id }}
                         cancelText="取消"
-                        disabled={record.enabled === 0}
-                        onConfirm={() => void handleDisable(record)}
+                        onConfirm={() => void handleDelete(record)}
                     >
-                        <Button type="link" size="small" danger icon={<Ban size={14} />} disabled={record.enabled === 0}>
-                            停用
+                        <Button type="link" size="small" danger icon={<Trash2 size={14} />}>
+                            删除
                         </Button>
                     </Popconfirm>
                 </Space>
@@ -503,9 +782,17 @@ export function ModelsPage() {
                 description="配置图片与视频模型的渠道线路、规格定价和生成能力。"
                 extra={
                     <Space>
-                        <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>
-                            刷新
+                        <Button icon={<RefreshCw size={15} />} loading={classifying} onClick={() => void previewClassifications()}>
+                            重新识别现有模型
                         </Button>
+                        <Select
+                            aria-label="模型分类筛选"
+                            value={capabilityFilter}
+                            onChange={(value: ModelCapability | "all") => setCapabilityFilter(value)}
+                            options={[{ value: "all", label: "全部分类" }, ...CAPABILITY_OPTIONS]}
+                            style={{ width: 150 }}
+                        />
+                        <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>刷新</Button>
                         <Button type="primary" icon={<Plus size={15} />} onClick={openCreate}>
                             新增模型
                         </Button>
@@ -513,13 +800,70 @@ export function ModelsPage() {
                 }
             />
 
+            <div style={{ padding: "16px 0", borderBottom: "1px solid var(--ant-color-border-secondary)", marginBottom: 16 }}>
+                <Typography.Text strong>上游成本同步</Typography.Text>
+                <Space wrap size={12} style={{ display: "flex", marginTop: 10, alignItems: "center" }}>
+                    <Select
+                        aria-label="价格来源渠道"
+                        style={{ minWidth: 210 }}
+                        value={pricingChannelId}
+                        placeholder="选择多元探索渠道（duoyuanx.com）"
+                        options={channels.filter((item) => {
+                            try { return new URL(item.normalizedBaseUrl).hostname.toLowerCase() === "duoyuanx.com"; }
+                            catch { return false; }
+                        }).map((item) => ({ label: item.name, value: item.id }))}
+                        onChange={setPricingChannelId}
+                    />
+                    <Button icon={<RefreshCw size={15} />} loading={syncingPrices} disabled={pricingChannelId == null}
+                        onClick={() => void refreshPrices()}>同步上游成本</Button>
+                    <Typography.Text>当前建议目标毛利率</Typography.Text>
+                    <InputNumber aria-label="目标毛利率百分比" min={marginFloorPercent} max={marginCeilingPercent} precision={0} value={marginPercent}
+                        onChange={(value) => setMarginPercent(Math.min(marginCeilingPercent, Math.max(marginFloorPercent, value ?? marginFloorPercent)))} addonAfter="%" style={{ width: 140 }} />
+                    <Button type="primary" loading={applyingPrices} disabled={applicablePrices.length === 0}
+                        onClick={applySuggestedPrices}>应用 {applicablePrices.length} 个逻辑模型建议</Button>
+                </Space>
+                <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+                    {priceSnapshot?.syncedAt ? `最近同步 ${new Date(`${priceSnapshot.syncedAt}Z`).toLocaleString("zh-CN")} · ${priceSnapshot.prices.length} 个公开报价 · ` : "暂无已同步报价，请先同步成本 · "}
+                    {priceSnapshot?.stale ? "公开报价快照已过期 · " : ""}
+                    金额按人民币元展示；当前建议参数：目标毛利 {marginPercent}%、最低毛利 {marginFloorPercent}%、目标上限 {marginCeilingPercent}%、成本有效期 {costMaxAgeHours} 小时。最低成本用于建议价，最高成本用于风险提示；同步不修改客户售价，只有点击「应用建议售价」并确认才更新。{pricingPlan.length > applicablePrices.length ? ` ${pricingPlan.length - applicablePrices.length} 个逻辑模型因成本、计费或规格不明确而跳过。` : ""}
+                </Typography.Text>
+            </div>
+
+            <Modal
+                title="模型分类纠正预览"
+                open={classificationPreview.length > 0}
+                onCancel={() => setClassificationPreview([])}
+                width={760}
+                okText="确认批量应用"
+                cancelText="暂不应用"
+                confirmLoading={classifying}
+                onOk={applyClassifications}
+            >
+                <Typography.Paragraph type="secondary">
+                    仅展示高置信且与当前分类不同、售价无冲突的建议。待审核/未分类、不变项和售价冲突项不会被覆盖；售价冲突需先手动统一，提交时后端会再次校验模型身份。
+                </Typography.Paragraph>
+                <Table<ModelClassificationSuggestion>
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    dataSource={classificationPreview}
+                    columns={[
+                        { title: "模型 ID", dataIndex: "id", width: 80 },
+                        { title: "上游模型", dataIndex: "upstreamModel", render: (value: string) => <span className="mono">{value}</span> },
+                        { title: "逻辑标识", dataIndex: "modelKey", render: (value: string) => <span className="mono">{value}</span> },
+                        { title: "当前分类", dataIndex: "currentCapability", render: (value: string) => <Tag>{modelCapabilityLabel(value)}</Tag> },
+                        { title: "建议分类", dataIndex: "suggestedCapability", render: (value: string) => <Tag color="blue">{modelCapabilityLabel(value)}</Tag> },
+                    ]}
+                />
+            </Modal>
+
             <Table<VideoModel>
                 rowKey="id"
                 loading={loading}
                 columns={columns}
-                dataSource={models}
+                dataSource={filteredModels}
                 pagination={false}
-                scroll={{ x: 2180 }}
+                scroll={{ x: 2500 }}
                 locale={{ emptyText: "暂无模型，请先新增" }}
             />
 
@@ -541,7 +885,7 @@ export function ModelsPage() {
                 <Form<ModelFormValues> form={form} layout="vertical" requiredMark={false}>
                     <Row gutter={16}>
                         <Col span={8}>
-                            <Form.Item label="媒体类型" name="capability" rules={[{ required: true, message: "请选择媒体类型" }]}>
+                            <Form.Item label="模型类型" name="capability" rules={[{ required: true, message: "请选择模型类型" }]}>
                                 <Select options={CAPABILITY_OPTIONS} onChange={handleCapabilityChange} />
                             </Form.Item>
                         </Col>
@@ -643,6 +987,7 @@ export function ModelsPage() {
                         </Col>
                     </Row>
 
+                    {isCreativeCapability ? <>
                     <Typography.Title level={5}>规格与客户售价</Typography.Title>
                     <Typography.Paragraph type="secondary">
                         每条规格对应客户端的一个可选项；仅配置上游实际支持的规格。预设用于快捷填写，不代表当前渠道支持。
@@ -654,7 +999,7 @@ export function ModelsPage() {
                                 <Tag key={index} color="purple" style={{ padding: "6px 10px", margin: 0, borderRadius: 8 }}>
                                     {rule.resolution?.replace("x", " × ") || "待选择规格"}
                                     {capability === "video" ? ` · ${rule.seconds || "—"} 秒` : ""}
-                                    {` · ${rule.credits == null ? "—" : Math.max(minChargeCredits, Math.ceil(rule.credits))} 积分/${capability === "image" ? "张" : "次"}`}
+                                    {` · ${rule.credits == null ? "—" : previewCharge(rule)} /${capability === "image" ? "张" : "次"}`}
                                 </Tag>
                             ))}
                         </div>
@@ -710,11 +1055,11 @@ export function ModelsPage() {
                                         <Col span={capability === "video" ? 7 : 9}>
                                             <Form.Item
                                                 {...field}
-                                                label={capability === "image" ? "每张积分" : "每条积分"}
+                                                label={capability === "image" ? "每张售价（元）" : "每条售价（元）"}
                                                 name={[field.name, "credits"]}
-                                                rules={[{ required: true, message: "请输入积分" }]}
+                                                rules={[{ required: true, message: "请输入人民币售价" }, nonnegativeMoney]}
                                             >
-                                                <InputNumber min={1} precision={0} style={{ width: "100%" }} />
+                                                <InputNumber<string> stringMode step={String(1 / exchangePerYuan)} prefix="¥" style={{ width: "100%" }} />
                                             </Form.Item>
                                         </Col>
                                         <Col span={2}>
@@ -731,7 +1076,7 @@ export function ModelsPage() {
                                         </Col>
                                     </Row>
                                 ))}
-                                <Button type="dashed" block icon={<Plus size={15} />} onClick={() => add(defaultPricingRules(capability)[0])}>
+                                <Button type="dashed" block icon={<Plus size={15} />} onClick={() => add(pricingRulesToYuan(defaultPricingRules(capability), exchangePerYuan)[0])}>
                                     添加规格价格
                                 </Button>
                                 <Form.ErrorList errors={errors} />
@@ -742,6 +1087,8 @@ export function ModelsPage() {
                     <Collapse
                         ghost
                         style={{ marginTop: 16 }}
+                        activeKey={advancedOpen ? ["compatibility"] : []}
+                        onChange={(keys) => setAdvancedOpen(Array.isArray(keys) ? keys.includes("compatibility") : keys === "compatibility")}
                         items={[{
                             key: "compatibility",
                             forceRender: true,
@@ -751,11 +1098,11 @@ export function ModelsPage() {
                                     <Row gutter={16}>
                                         <Col span={12}>
                                             <Form.Item
-                                                label="积分 / 秒"
+                                                label="每秒单价（元）"
                                                 name="creditsPerSecond"
-                                                rules={[{ required: true, message: "请输入每秒积分" }]}
+                                                rules={[{ required: true, message: "请输入每秒人民币单价" }, nonnegativeMoney]}
                                             >
-                                                <InputNumber min={0} step={0.5} precision={4} style={{ width: "100%" }} />
+                                                <InputNumber<string> stringMode step={String(1 / exchangePerYuan)} prefix="¥" style={{ width: "100%" }} />
                                             </Form.Item>
                                         </Col>
                                         <Col span={12}>
@@ -793,11 +1140,11 @@ export function ModelsPage() {
                         </Col>
                         <Col span={12}>
                             <Form.Item
-                                label="最小扣费积分"
+                                label="最低扣费金额（元）"
                                 name="minChargeCredits"
-                                rules={[{ required: true, message: "请输入最小扣费积分" }]}
+                                rules={[{ required: true, message: "请输入最低扣费金额" }, nonnegativeMoney]}
                             >
-                                <InputNumber min={0} step={1} style={{ width: "100%" }} />
+                                <InputNumber<string> stringMode step={String(1 / exchangePerYuan)} prefix="¥" style={{ width: "100%" }} />
                             </Form.Item>
                         </Col>
                     </Row>
@@ -849,9 +1196,10 @@ export function ModelsPage() {
                             ),
                         }]}
                     />
+                    </> : <Typography.Paragraph type="secondary">此分类用于模型登记与审核，暂不开放创作入口和生成价格配置。</Typography.Paragraph>}
 
                     <Row gutter={16}>
-                        <Col span={8}>
+                        {isCreativeCapability && <Col span={8}>
                             <Form.Item
                                 label="最大参考图数"
                                 name="maxReferenceImages"
@@ -859,7 +1207,7 @@ export function ModelsPage() {
                             >
                                 <InputNumber min={0} max={100} style={{ width: "100%" }} />
                             </Form.Item>
-                        </Col>
+                        </Col>}
                         <Col span={8}>
                             <Form.Item label="排序" name="sort" rules={[{ required: true, message: "请输入排序值" }]}>
                                 <InputNumber step={1} style={{ width: "100%" }} />

@@ -69,7 +69,7 @@ class ImageTaskServiceTest {
         when(billing.settle(eq(USER), eq(10L), anyString(), eq(10L), eq(10L))).thenReturn(true);
         when(billing.refund(eq(USER), eq(10L), anyString(), eq(10L), anyString())).thenReturn(true);
         VideoTaskService realViews = new VideoTaskService(tasks, events, models, channels, files,
-                new PricingService(json), billing, settings, storage, null, null, json);
+                new PricingService(json), billing, settings, storage, null, null, json, manager);
         when(models.selectById(1L)).thenReturn(model);
         when(views.toView(any())).thenAnswer(invocation -> realViews.toView(invocation.getArgument(0)));
         when(adapter.generate(any(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyList()))
@@ -127,13 +127,27 @@ class ImageTaskServiceTest {
         verifyNoInteractions(adapter); verify(billing, never()).hold(any(), any(), anyString(), anyLong(), anyString());
     }
 
-    @Test void crossCapabilityModelAndUnknownSizeAreRejectedBeforeCharging() {
-        model.setCapability("video");
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"video", "llm", "unknown"})
+    void crossCapabilityModelAndUnknownSizeAreRejectedBeforeCharging(String capability) {
+        model.setCapability(capability);
         assertThrows(BizException.class, () -> service.create(USER, command(), "key", "", ""));
         model.setCapability("image");
         assertThrows(BizException.class, () -> service.create(USER,
                 new ImageTaskService.CreateCommand("gpt-image-2", "draw", "2048x2048", List.of()), "key", "", ""));
         verify(billing, never()).hold(any(), any(), anyString(), anyLong(), anyString()); verifyNoInteractions(adapter);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"video", "llm", "unknown"})
+    void classificationChangedAfterPreparationRefundsWithoutImageDispatch(String capability) {
+        doAnswer(invocation -> { model.setCapability(capability); return 1; }).when(models).incrementLoad(1L);
+        var view = service.create(USER, command(), "key", "", "req");
+        assertEquals("failed", view.status());
+        assertEquals("MODEL_CAPABILITY_CHANGED", view.errorCode());
+        verifyNoInteractions(adapter, storage);
+        verify(billing).refund(eq(USER), eq(10L), anyString(), eq(10L), anyString());
+        verify(billing, never()).settle(any(), any(), anyString(), anyLong(), anyLong());
     }
 
     @Test void videoOnlyChannelIsRejected() {
@@ -159,7 +173,7 @@ class ImageTaskServiceTest {
     @Test void imageAndVideoDetailCannotCrossCapabilities() {
         service.create(USER, command(), "key", "", "");
         var video = new VideoTaskService(tasks, events, models, channels, files, new PricingService(json),
-                billing, settings, storage, null, null, json);
+                billing, settings, storage, null, null, json, manager);
         assertThrows(BizException.class, () -> video.detail(USER, persisted.get().getTaskNo()));
         persisted.get().setParamsJson("{\"capability\":\"video\"}");
         assertThrows(BizException.class, () -> service.get(USER, persisted.get().getTaskNo()));
@@ -167,7 +181,7 @@ class ImageTaskServiceTest {
 
     @Test void publicImageCatalogReturnsExactPricingAndRequiresImageChannel() {
         when(models.selectEnabledByCapabilitySorted("image")).thenReturn(List.of(model));
-        var catalog = new ModelService(models, channels, json);
+        var catalog = new ModelService(models, channels, tasks, json);
         var result = catalog.listModels("image");
         assertEquals(1, result.size()); assertEquals("image", result.get(0).capability());
         assertEquals(List.of(Map.of("resolution", "1024x1024", "credits", 10)), result.get(0).pricing().get("rules"));
@@ -213,7 +227,7 @@ class ImageTaskServiceTest {
         when(models.selectEnabledByCapabilitySorted("image")).thenReturn(List.of(alternate));
         when(models.selectById(3L)).thenReturn(alternate);
         when(models.selectEnabledByModelKey("gpt-image-2", "image")).thenReturn(List.of(alternate));
-        var catalog = new ModelService(models, channels, json).listModels("image");
+        var catalog = new ModelService(models, channels, tasks, json).listModels("image");
         assertEquals(1, catalog.size()); assertEquals("Image Two", catalog.get(0).displayName());
         assertEquals(List.of(Map.of("resolution", "1024x1024", "credits", 10)), catalog.get(0).pricing().get("rules"));
         assertEquals("succeeded", service.create(USER, command(), "key", "", "").status());

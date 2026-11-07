@@ -19,6 +19,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { adminApi } from "../api/admin";
 import { useFeedback } from "../lib/feedback";
 import { useAuthStore } from "../stores/auth";
+import { useCurrency, CurrencyProvider } from "../lib/currency";
 
 const { Sider, Header, Content } = Layout;
 
@@ -57,8 +58,9 @@ function resolveMenuKey(pathname: string): string {
     return `/${first}`;
 }
 
-export function AdminLayout() {
+export function AdminLayoutContent() {
     const { showSuccess } = useFeedback();
+    const currency = useCurrency();
     const navigate = useNavigate();
     const location = useLocation();
     const admin = useAuthStore((state) => state.admin);
@@ -164,9 +166,27 @@ export function AdminLayout() {
                 </Header>
 
                 <Content className="admin-content">
-                    <Outlet />
+                    {currency.ready ? (
+                        <Outlet />
+                    ) : currency.loading ? (
+                        <div style={{ padding: 48, textAlign: "center" }}>
+                            <Typography.Text type="secondary">正在加载公共人民币设置…</Typography.Text>
+                        </div>
+                    ) : (
+                        <div style={{ marginBottom: 16, padding: "10px 14px", border: "1px solid #f0c36d", background: "#fffbe6", color: "#8a5a00" }}>
+                            金额未就绪：公共人民币设置加载失败，金额暂不展示。<Button type="link" size="small" onClick={currency.retry}>重试</Button>
+                        </div>
+                    )}
                 </Content>
             </Layout>
         </Layout>
+    );
+}
+
+export function AdminLayout() {
+    return (
+        <CurrencyProvider>
+            <AdminLayoutContent />
+        </CurrencyProvider>
     );
 }

@@ -24,7 +24,9 @@ import com.infinitecanvas.mapper.VideoTaskMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -58,12 +60,13 @@ public class VideoTaskService {
     private final OpenAiCompatVideoAdapter adapter;
     private final SsrfGuard ssrfGuard;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate tx;
 
     public VideoTaskService(VideoTaskMapper taskMapper, VideoTaskEventMapper eventMapper, VideoModelMapper modelMapper,
                             ChannelMapper channelMapper, FileObjectMapper fileObjectMapper,
                             PricingService pricingService, BillingService billingService, SettingService settingService,
                             FileStorageService fileStorageService, OpenAiCompatVideoAdapter adapter,
-                            SsrfGuard ssrfGuard, ObjectMapper objectMapper) {
+                            SsrfGuard ssrfGuard, ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
         this.taskMapper = taskMapper;
         this.eventMapper = eventMapper;
         this.modelMapper = modelMapper;
@@ -76,6 +79,7 @@ public class VideoTaskService {
         this.adapter = adapter;
         this.ssrfGuard = ssrfGuard;
         this.objectMapper = objectMapper;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     public record CreateCommand(String modelKey, Long modelId, String prompt, int seconds, String resolution, String size,
@@ -139,14 +143,15 @@ public class VideoTaskService {
         if (active >= limit) {
             throw new BizException(ErrorCode.TASK_42901, "同时进行的任务已达上限（" + limit + " 个），请等待完成", null, 429);
         }
-        VideoModel routeModel = selectRoute(model, cmd, resolution, references);
-        Channel channel = channelMapper.selectById(routeModel.getChannelId());
         long credits = pricingService.quote(model, cmd.seconds(), resolution, cmd.generateAudio());
         if ((account.getAvailable() == null ? 0 : account.getAvailable()) < credits) {
             throw new BizException(ErrorCode.BILL_40201,
-                    "积分不足：本次需要 " + credits + " 积分，当前可用 " + (account.getAvailable() == null ? 0 : account.getAvailable()) + " 积分",
+                    "余额不足：本次需要 " + MoneyAmounts.format(credits, settingService)
+                            + "，当前可用 " + MoneyAmounts.format(account.getAvailable() == null ? 0 : account.getAvailable(), settingService),
                     Map.of("required", credits, "available", account.getAvailable() == null ? 0 : account.getAvailable()), 402);
         }
+        VideoModel routeModel = selectRoute(model, cmd, resolution, references, credits);
+        Channel channel = channelMapper.selectById(routeModel.getChannelId());
         int pollTimeout = (int) settingService.getLong("task.poll_timeout_minutes", 30);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         VideoTask task = new VideoTask();
@@ -173,7 +178,8 @@ public class VideoTaskService {
         billingService.hold(userId, task.getId(), task.getTaskNo(), credits, requestId);
         task.setHeldCredits(credits);
         taskMapper.updateById(task);
-        event(task, "", "CREATED", "USER", "创建任务，预扣 " + credits + " 积分");
+        modelMapper.incrementLoad(routeModel.getId());
+        event(task, "", "CREATED", "USER", "创建任务，预扣 " + MoneyAmounts.format(credits, settingService));
         return new TaskDtos.CreateResult(task.getTaskNo(), "queued", credits, credits, 3000);
     }
 
@@ -182,20 +188,23 @@ public class VideoTaskService {
         if (modelKey == null || modelKey.isBlank()) {
             VideoModel legacyRoute = cmd.modelId() == null ? null : modelMapper.selectById(cmd.modelId());
             if (legacyRoute != null) {
+                if (!"video".equals(legacyRoute.getCapability())) {
+                    throw new BizException(ErrorCode.VALID_40003, "视频模型不存在或未上架");
+                }
                 modelKey = legacyRoute.getModelKey() == null || legacyRoute.getModelKey().isBlank()
                         ? legacyRoute.getUpstreamModel() : legacyRoute.getModelKey();
             }
         }
         VideoModel canonical = modelKey == null || modelKey.isBlank()
                 ? null : modelMapper.selectCanonicalByModelKey(modelKey.trim(), "video");
-        if (canonical == null) {
+        if (canonical == null || !"video".equals(canonical.getCapability())) {
             throw new BizException(ErrorCode.VALID_40003, "视频模型不存在或未上架");
         }
         return canonical;
     }
 
     private VideoModel selectRoute(VideoModel logicalModel, CreateCommand cmd, String resolution,
-                                   List<String> references) {
+                                   List<String> references, long salePrice) {
         String modelKey = logicalModel.getModelKey() == null || logicalModel.getModelKey().isBlank()
                 ? logicalModel.getUpstreamModel() : logicalModel.getModelKey();
         List<VideoModel> available = new ArrayList<>();
@@ -205,8 +214,9 @@ public class VideoTaskService {
                     ? List.of() : readStringList(routeChannel.getCapabilities());
             boolean channelSupportsVideo = channelCapabilities.isEmpty() || channelCapabilities.contains("video");
             int maxReferences = route.getMaxReferenceImages() == null ? 1 : route.getMaxReferenceImages();
-            boolean supportsSeconds = pricingService.hasPricingRules(route)
-                    || readStringList(route.getSupportedSeconds()).contains(String.valueOf(cmd.seconds()));
+            List<String> routeSeconds = readStringList(route.getSupportedSeconds());
+            boolean supportsSeconds = routeSeconds.isEmpty()
+                    ? pricingService.hasPricingRules(route) : routeSeconds.contains(String.valueOf(cmd.seconds()));
             if (routeChannel == null || routeChannel.getEnabled() == null || routeChannel.getEnabled() != 1
                     || !channelSupportsVideo || route.getRouteWeight() != null && route.getRouteWeight() <= 0
                     || !supportsSeconds
@@ -224,7 +234,8 @@ public class VideoTaskService {
         if (available.isEmpty()) {
             throw new BizException(ErrorCode.VALID_40003, "当前模型暂无支持该规格的可用渠道线路");
         }
-        return WeightedRouteSelector.select(available);
+        return new CostAwareRouteSelector(settingService, channelMapper, taskMapper)
+                .select(available, salePrice, cmd.seconds());
     }
 
     private boolean enabled(Integer value) {
@@ -266,18 +277,30 @@ public class VideoTaskService {
 
     @Transactional
     public TaskDtos.CancelResult cancel(Long userId, String taskNo) {
-        VideoTask task = requireOwned(userId, taskNo);
-        if (!ACTIVE_STATUSES.contains(task.getStatus())) {
-            throw new BizException(ErrorCode.TASK_40901, "任务已结束，无法取消", null, 409);
-        }
-        int updated = taskMapper.cancelActive(task.getId(), LocalDateTime.now(ZoneOffset.UTC),
-                false, ACTIVE_STATUSES);
-        if (updated == 0) {
-            throw new BizException(ErrorCode.TASK_40901, "任务状态已变化，请刷新", null, 409);
-        }
-        billingService.refund(userId, task.getId(), task.getTaskNo(), task.getHeldCredits() == null ? 0 : task.getHeldCredits(), "用户取消任务退款");
-        event(task, task.getStatus(), "CANCELLED", "USER", "用户取消");
-        return new TaskDtos.CancelResult(taskNo, "cancelled", task.getHeldCredits() == null ? 0 : task.getHeldCredits());
+        return cancelTask(requireOwned(userId, taskNo), false);
+    }
+
+    /** Shared by user video cancellation and administrator video/image cancellation. */
+    public TaskDtos.CancelResult cancelTask(VideoTask task, boolean admin) {
+        return tx.execute(status -> {
+            if (!ACTIVE_STATUSES.contains(task.getStatus())) {
+                throw new BizException(ErrorCode.TASK_40901, "任务已结束，无法取消", null, 409);
+            }
+            billingService.lockAccount(task.getUserId());
+            int updated = taskMapper.cancelActive(task.getId(), LocalDateTime.now(ZoneOffset.UTC),
+                    admin, ACTIVE_STATUSES);
+            if (updated == 0) {
+                throw new BizException(ErrorCode.TASK_40901, "任务状态已变化，请刷新", null, 409);
+            }
+            modelMapper.decrementLoad(task.getModelId());
+            long held = task.getHeldCredits() == null ? 0 : task.getHeldCredits();
+            if (!billingService.refund(task.getUserId(), task.getId(), task.getTaskNo(), held,
+                    admin ? "管理员取消退款" : "用户取消任务退款")) {
+                throw new IllegalStateException("task cancellation refund failed");
+            }
+            event(task, task.getStatus(), "CANCELLED", admin ? "ADMIN" : "USER", admin ? "管理员取消" : "用户取消");
+            return new TaskDtos.CancelResult(task.getTaskNo(), "cancelled", held);
+        });
     }
 
     public void delete(Long userId, String taskNo) {
@@ -309,13 +332,17 @@ public class VideoTaskService {
         }
         VideoModel model = modelMapper.selectById(fresh.getModelId());
         Channel channel = channelMapper.selectById(fresh.getChannelId());
+        if (model != null && !"video".equals(model.getCapability())) {
+            fail(fresh, "MODEL_CAPABILITY_CHANGED", "视频模型类型已变更，金额已退回");
+            return;
+        }
         if (model == null || channel == null || channel.getEnabled() == null || channel.getEnabled() != 1) {
             fail(fresh, "CHANNEL_DISABLED", "模型或渠道已下架");
             return;
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (fresh.getDeadlineAt() != null && now.isAfter(fresh.getDeadlineAt()) && !"DOWNLOADING".equals(fresh.getStatus())) {
-            fail(fresh, "EXPIRED", "生成超时，积分已退回");
+            fail(fresh, "EXPIRED", "生成超时，金额已退回");
             return;
         }
         try {
@@ -334,7 +361,7 @@ public class VideoTaskService {
             }
         } catch (Exception ex) {
             log.error("poll task failed task=" + fresh.getTaskNo(), ex);
-            fail(fresh, "PLATFORM_ERROR", "平台内部错误，积分已退回");
+            fail(fresh, "PLATFORM_ERROR", "平台内部错误，金额已退回");
         }
     }
 
@@ -394,9 +421,9 @@ public class VideoTaskService {
                 downloadAndFinalize(task.getId(), state);
             }
             case "FAILED" -> fail(task, "UPSTREAM_TASK_FAILED", adapter.extractErrorMessage(state) == null
-                    ? "上游生成失败，积分已退回" : "上游生成失败：" + adapter.extractErrorMessage(state));
-            case "CANCELLED" -> fail(task, "CANCELLED_UPSTREAM", "上游任务已取消，积分已退回");
-            case "EXPIRED" -> fail(task, "EXPIRED", "生成超时，积分已退回");
+                    ? "上游生成失败，金额已退回" : "上游生成失败：" + adapter.extractErrorMessage(state));
+            case "CANCELLED" -> fail(task, "CANCELLED_UPSTREAM", "上游任务已取消，金额已退回");
+            case "EXPIRED" -> fail(task, "EXPIRED", "生成超时，金额已退回");
             default -> schedule(task, task.getStatus(), 5);
         }
         if (adapter.extractResultUrl(state) != null && "COMPLETED".equals(mapped)) {
@@ -427,34 +454,49 @@ public class VideoTaskService {
         finalizeSuccess(taskId, file.getId());
     }
 
-    @Transactional
     public void finalizeSuccess(Long taskId, Long fileId) {
-        VideoTask task = taskMapper.selectById(taskId);
-        FileObject file = fileObjectMapper.selectById(fileId);
-        if (file != null) {
+        // Workers call this method on the same instance, so a proxy annotation is insufficient.
+        tx.executeWithoutResult(status -> {
+            VideoTask task = taskMapper.selectById(taskId);
+            if (task == null || !ACTIVE_STATUSES.contains(task.getStatus())) {
+                return;
+            }
+            billingService.lockAccount(task.getUserId());
+            int updated = taskMapper.finalizeSuccess(taskId, fileId, LocalDateTime.now(ZoneOffset.UTC));
+            if (updated == 0) {
+                return;
+            }
+            FileObject file = fileObjectMapper.selectById(fileId);
+            if (file == null) {
+                throw new IllegalStateException("task result file missing");
+            }
             file.setRefCount(1);
             fileObjectMapper.updateById(file);
-        }
-        int updated = taskMapper.finalizeSuccess(taskId, fileId, LocalDateTime.now(ZoneOffset.UTC));
-        if (updated == 0) {
-            return;
-        }
-        billingService.settle(task.getUserId(), taskId, task.getTaskNo(),
-                task.getHeldCredits() == null ? 0 : task.getHeldCredits(),
-                task.getHeldCredits() == null ? 0 : task.getHeldCredits());
-        event(task, "DOWNLOADING", "SUCCEEDED", "SYSTEM", "生成完成，已结算");
+            modelMapper.decrementLoad(task.getModelId());
+            long held = task.getHeldCredits() == null ? 0 : task.getHeldCredits();
+            if (!billingService.settle(task.getUserId(), taskId, task.getTaskNo(), held, held)) {
+                throw new IllegalStateException("task settlement failed");
+            }
+            event(task, task.getStatus(), "SUCCEEDED", "SYSTEM", "生成完成，已结算");
+        });
     }
 
-    @Transactional
     public void fail(VideoTask task, String code, String message) {
-        int updated = taskMapper.failActive(task.getId(), "EXPIRED".equals(code) ? "EXPIRED" : "FAILED",
-                code, message, LocalDateTime.now(ZoneOffset.UTC), ACTIVE_STATUSES);
-        if (updated == 0) {
-            return;
-        }
-        billingService.refund(task.getUserId(), task.getId(), task.getTaskNo(),
-                task.getHeldCredits() == null ? 0 : task.getHeldCredits(), message);
-        event(task, task.getStatus(), "EXPIRED".equals(code) ? "EXPIRED" : "FAILED", "SYSTEM", message);
+        tx.executeWithoutResult(status -> {
+            billingService.lockAccount(task.getUserId());
+            String terminal = "EXPIRED".equals(code) ? "EXPIRED" : "FAILED";
+            int updated = taskMapper.failActive(task.getId(), terminal,
+                    code, message, LocalDateTime.now(ZoneOffset.UTC), ACTIVE_STATUSES);
+            if (updated == 0) {
+                return;
+            }
+            modelMapper.decrementLoad(task.getModelId());
+            if (!billingService.refund(task.getUserId(), task.getId(), task.getTaskNo(),
+                    task.getHeldCredits() == null ? 0 : task.getHeldCredits(), message)) {
+                throw new IllegalStateException("task failure refund failed");
+            }
+            event(task, task.getStatus(), terminal, "SYSTEM", message);
+        });
     }
 
     private void schedule(VideoTask task, String status, int seconds) {

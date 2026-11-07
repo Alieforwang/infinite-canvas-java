@@ -49,8 +49,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
             Long id = Long.valueOf(claims.getSubject());
-            String expectedRole = request.getRequestURI().startsWith("/api/admin/") ? "admin" : "user";
-            if (!expectedRole.equals(role)) {
+            if (!"user".equals(role) && !"admin".equals(role)) {
+                writeError(response, ErrorCode.AUTH_40301, "令牌与接口不匹配", 403);
+                return;
+            }
+            String path = request.getRequestURI();
+            boolean adminEndpoint = path.startsWith("/api/admin/");
+            // 公开接口（见 PublicPaths）没有身份语义，不做 audience 限制；
+            // 其余接口仍保持两端隔离：/api/admin/** 只收管理员 token，用户接口只收用户 token。
+            if (adminEndpoint ? !"admin".equals(role)
+                    : !PublicPaths.isPublic(path) && !"user".equals(role)) {
                 writeError(response, ErrorCode.AUTH_40301, "令牌与接口不匹配", 403);
                 return;
             }

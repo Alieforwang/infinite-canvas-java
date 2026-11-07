@@ -63,27 +63,27 @@ final class ModelDiscovery {
         }
     }
 
-    static List<String> parse(JsonNode body) {
-        Set<String> ids = new LinkedHashSet<>();
+    static List<UpstreamClient.DiscoveredModel> parseDiscovered(JsonNode body) {
+        java.util.Map<String, String> models = new java.util.LinkedHashMap<>();
         boolean recognized = false;
         if (body != null && body.isArray()) {
-            collect(body, ids, true);
+            collect(body, models, true);
             recognized = true;
         } else if (body != null && body.isObject()) {
             if (body.path("data").isArray()) {
-                collect(body.get("data"), ids, false);
+                collect(body.get("data"), models, false);
                 recognized = true;
             }
             if (body.path("models").isArray()) {
-                collect(body.get("models"), ids, true);
+                collect(body.get("models"), models, true);
                 recognized = true;
             }
         }
         if (!recognized) throw new IllegalArgumentException("上游模型列表响应格式无法识别");
-        return List.copyOf(ids);
+        return models.entrySet().stream().map(entry -> new UpstreamClient.DiscoveredModel(entry.getKey(), entry.getValue())).toList();
     }
 
-    private static void collect(JsonNode array, Set<String> ids, boolean alternate) {
+    private static void collect(JsonNode array, java.util.Map<String, String> models, boolean alternate) {
         for (JsonNode item : array) {
             String id = null;
             if (item.isTextual() && alternate) id = item.textValue().trim();
@@ -97,7 +97,10 @@ final class ModelDiscovery {
                     }
                 }
             }
-            if (id != null && !id.isBlank()) ids.add(id);
+            if (id != null && !id.isBlank()) {
+                String capability = ModelCapabilityClassifier.classify(id, item);
+                models.merge(id, capability, (first, second) -> first.equals(second) ? first : "unknown");
+            }
         }
     }
 }

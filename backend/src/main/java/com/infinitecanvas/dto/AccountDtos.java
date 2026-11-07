@@ -10,6 +10,13 @@ public final class AccountDtos {
     public record AccountView(long available, long frozen, long totalConsumed, long totalRecharged,
                               long exchangePerYuan, long concurrencyLimit, long running,
                               Map<String, Object> currentPlan) {
+        public String getCurrency() {
+            return "CNY";
+        }
+
+        public String getCurrencyUnit() {
+            return "元";
+        }
     }
 
     public record TransactionView(Long id, String bizType, String bizLabel, long amount, long balanceAfter,

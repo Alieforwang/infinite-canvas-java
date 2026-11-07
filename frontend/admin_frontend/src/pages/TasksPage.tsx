@@ -25,10 +25,13 @@ import { JsonBlock } from "../components/JsonBlock";
 import { PageHead } from "../components/PageHead";
 import { StatusTag } from "../components/StatusTag";
 import { useFeedback } from "../lib/feedback";
+import { useCurrency } from "../lib/currency";
 import {
     durationSeconds,
     formatBytes,
-    formatCredits,
+    creditsToYuan,
+    currencyText,
+    formatYuan,
     formatDateTime,
     formatDuration,
     taskStatusMeta,
@@ -84,6 +87,9 @@ function statusProgressStatus(status: string, progress: number): "success" | "ex
 
 export function TasksPage() {
     const { showApiError, showSuccess } = useFeedback();
+    const { ready, exchangePerYuan } = useCurrency();
+    const formatAmount = (value?: number | null) => ready ? formatYuan(creditsToYuan(value, exchangePerYuan)) : "-";
+    const formatMoneyText = (value?: string | null) => ready ? currencyText(value, exchangePerYuan) : "";
     const [data, setData] = useState<PageResult<AdminTaskRow> | null>(null);
     const [loading, setLoading] = useState(true);
     const [statusInput, setStatusInput] = useState<string | undefined>(undefined);
@@ -155,8 +161,8 @@ export function TasksPage() {
             content: (
                 <div>
                     <p>
-                        重试会以相同参数<strong>新建一个任务</strong>，并重新冻结 / 扣除积分（预计{" "}
-                        <strong>{formatCredits(task.heldCredits)}</strong> 积分），原任务记录保留。
+                        重试会以相同参数<strong>新建一个任务</strong>，并重新冻结 / 扣除金额（预计{" "}
+                        <strong>{formatAmount(task.heldCredits)}</strong>），原任务记录保留。
                     </p>
                     <p className="muted" style={{ marginBottom: 0 }}>
                         任务号：<span className="mono">{task.taskNo}</span>
@@ -189,7 +195,7 @@ export function TasksPage() {
         setActionTaskNo(record.task.taskNo);
         try {
             await adminApi.cancelTask(record.task.taskNo);
-            showSuccess("任务已取消，冻结积分将自动退还");
+            showSuccess("任务已取消，冻结金额将自动退还");
             await load();
             if (detailTarget?.task.taskNo === record.task.taskNo) {
                 await loadDetail(record.task.taskNo);
@@ -220,7 +226,7 @@ export function TasksPage() {
         setRefunding(true);
         try {
             await adminApi.refundTask(refundTarget.task.taskNo, values.reason.trim());
-            showSuccess("退款成功，冻结积分已退回用户");
+            showSuccess("退款成功，冻结金额已退回用户");
             const taskNo = refundTarget.task.taskNo;
             setRefundTarget(null);
             await load();
@@ -266,14 +272,14 @@ export function TasksPage() {
             render: (_: unknown, record: AdminTaskRow) => <StatusTag meta={taskStatusMeta(record.task.status)} />,
         },
         {
-            title: "积分（冻结 / 结算）",
+            title: "金额（冻结 / 结算）",
             key: "credits",
             width: 150,
             render: (_: unknown, record: AdminTaskRow) => (
                 <div>
-                    <div className="credits-value">冻结 {formatCredits(record.task.heldCredits)}</div>
+                    <div className="credits-value">冻结 {formatAmount(record.task.heldCredits)}</div>
                     <div className="muted" style={{ fontSize: 11 }}>
-                        结算 {formatCredits(record.task.settledCredits)}
+                        结算 {formatAmount(record.task.settledCredits)}
                     </div>
                 </div>
             ),
@@ -324,7 +330,7 @@ export function TasksPage() {
                         {canCancel(status) ? (
                             <Popconfirm
                                 title="取消任务"
-                                description="取消后任务终止，冻结积分将自动退还，确认继续？"
+                                description="取消后任务终止，冻结金额将自动退还，确认继续？"
                                 okText="确认取消"
                                 okButtonProps={{ danger: true, loading: actionTaskNo === record.task.taskNo }}
                                 cancelText="再想想"
@@ -365,7 +371,7 @@ export function TasksPage() {
                     </Space>
                     {event.detail ? (
                         <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-                            {event.detail}
+                            {formatMoneyText(event.detail)}
                         </div>
                     ) : null}
                 </div>
@@ -399,16 +405,16 @@ export function TasksPage() {
             dataIndex: "availableDelta",
             width: 110,
             align: "right",
-            render: (value: number | null) => <span style={{ color: (value ?? 0) >= 0 ? "#059669" : "#dc2626" }}>{formatCredits(value)}</span>,
+            render: (value: number | null) => <span style={{ color: (value ?? 0) >= 0 ? "#059669" : "#dc2626" }}>{formatAmount(value)}</span>,
         },
         {
             title: "冻结变动",
             dataIndex: "frozenDelta",
             width: 110,
             align: "right",
-            render: (value: number | null) => <span style={{ color: (value ?? 0) >= 0 ? "#059669" : "#dc2626" }}>{formatCredits(value)}</span>,
+            render: (value: number | null) => <span style={{ color: (value ?? 0) >= 0 ? "#059669" : "#dc2626" }}>{formatAmount(value)}</span>,
         },
-        { title: "备注", dataIndex: "remark", ellipsis: true, render: (value: string | null) => value || "-" },
+        { title: "备注", dataIndex: "remark", ellipsis: true, render: (value: string | null) => formatMoneyText(value) || "-" },
         {
             title: "时间",
             dataIndex: "at",
@@ -462,7 +468,7 @@ export function TasksPage() {
                     </Button>
                     <Button onClick={handleReset}>重置</Button>
                 </div>
-                <Typography.Text type="secondary">共 {formatCredits(data?.total ?? 0)} 个任务</Typography.Text>
+                <Typography.Text type="secondary">共 {(data?.total ?? 0).toLocaleString("zh-CN")} 个任务</Typography.Text>
             </div>
 
             <Table<AdminTaskRow>
@@ -498,7 +504,7 @@ export function TasksPage() {
                                 type="error"
                                 showIcon
                                 message={`任务失败：${currentTask.errorCode || "未知错误"}`}
-                                description={currentTask.errorMessage || "-"}
+                                description={formatMoneyText(currentTask.errorMessage) || "-"}
                                 style={{ marginBottom: 16 }}
                             />
                         ) : null}
@@ -518,11 +524,11 @@ export function TasksPage() {
                             <Descriptions.Item label="耗时">
                                 {formatDuration(currentTask.createdAt, currentTask.finishedAt)}
                             </Descriptions.Item>
-                            <Descriptions.Item label="冻结积分">
-                                <span className="credits-value">{formatCredits(currentTask.heldCredits)}</span>
+                            <Descriptions.Item label="冻结金额">
+                                <span className="credits-value">{formatAmount(currentTask.heldCredits)}</span>
                             </Descriptions.Item>
-                            <Descriptions.Item label="结算积分">
-                                <span className="credits-value">{formatCredits(currentTask.settledCredits)}</span>
+                            <Descriptions.Item label="结算金额">
+                                <span className="credits-value">{formatAmount(currentTask.settledCredits)}</span>
                             </Descriptions.Item>
                             <Descriptions.Item label="创建时间">{formatDateTime(currentTask.createdAt)}</Descriptions.Item>
                             <Descriptions.Item label="完成时间">{formatDateTime(currentTask.finishedAt)}</Descriptions.Item>
@@ -621,7 +627,7 @@ export function TasksPage() {
                 <Alert
                     type="warning"
                     showIcon
-                    message={`将退回冻结积分 ${formatCredits(refundTarget?.task.heldCredits)}，操作不可撤销。`}
+                    message={`将退回冻结金额 ${formatAmount(refundTarget?.task.heldCredits)}，操作不可撤销。`}
                     style={{ marginBottom: 16 }}
                 />
                 <Form<RefundFormValues> form={refundForm} layout="vertical">

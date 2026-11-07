@@ -65,6 +65,12 @@ public class OpenAiCompatVideoAdapter {
             if (ctx.generateAudio()) {
                 body.put("generate_audio", true);
             }
+            // Gateways that follow the vendor metadata dialect (duoyuanx Wan/Seedance) need
+            // reference images inside metadata.media; the OpenAI-style top-level fields alone
+            // would silently turn a reference generation into text-to-video.
+            if (!ctx.referenceImages().isEmpty()) {
+                body.put("metadata", buildReferenceMetadata(ctx));
+            }
             mergeExtraRequestParams(body, ctx.model().getExtraRequestParams());
             return client.postJson(ctx.channel(), ctx.task().getId(), ctx.task().getTaskNo(), "/v1/videos", body);
         }
@@ -225,6 +231,48 @@ public class OpenAiCompatVideoAdapter {
         } catch (Exception ex) {
             throw new UpstreamException("UPSTREAM_BAD_BODY", "无法解析上游响应", 502, raw);
         }
+    }
+
+    /** Vendor JSON dialect: generation params + reference images as data URLs under metadata.media. */
+    Map<String, Object> buildReferenceMetadata(CreateContext ctx) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (ctx.resolution() != null && !ctx.resolution().isBlank()) {
+            metadata.put("resolution", resolutionName(ctx.resolution()));
+        }
+        if (ctx.ratio() != null && !ctx.ratio().isBlank()) {
+            metadata.put("ratio", ctx.ratio());
+        }
+        metadata.put("duration", ctx.seconds());
+        metadata.put("audio", ctx.generateAudio());
+        metadata.put("watermark", ctx.watermark());
+        boolean frames = "frames".equalsIgnoreCase(ctx.mode());
+        int limit = Math.min(ctx.referenceImages().size(), frames ? 2 : 10);
+        List<Map<String, Object>> media = new ArrayList<>();
+        for (int index = 0; index < limit; index++) {
+            String type = frames ? (index == 0 ? "first_frame" : "last_frame") : "reference_image";
+            media.add(Map.of("type", type, "url", imageDataUrl(ctx.referenceImages().get(index))));
+        }
+        metadata.put("media", media);
+        return metadata;
+    }
+
+    static String imageDataUrl(byte[] bytes) {
+        String mime = "image/png";
+        if (bytes.length > 3 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
+            mime = "image/jpeg";
+        } else if (bytes.length > 11 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            mime = "image/webp";
+        }
+        return "data:" + mime + ";base64," + Base64.getEncoder().encodeToString(bytes);
+    }
+
+    static String resolutionName(String resolution) {
+        String value = resolution == null ? "" : resolution.trim();
+        if (value.matches("(?i)\\d+p")) {
+            return value.substring(0, value.length() - 1) + "P";
+        }
+        return value;
     }
 
     Map<String, Object> buildSub2ApiBody(CreateContext ctx) {

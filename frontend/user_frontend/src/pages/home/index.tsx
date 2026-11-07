@@ -23,6 +23,7 @@ import { Link } from "react-router-dom";
 
 import "@/styles/stitch.css";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { useCurrency } from "@/stores/use-public-settings-store";
 
 const MODELS = [
     { name: "OpenAI Sora 2.0", icon: Film, tone: "secondary" },
@@ -33,13 +34,13 @@ const MODELS = [
     { name: "MiniMax 海螺", icon: Sparkles, tone: "tertiary" },
 ];
 
-const PLANS = [
+const marketingPlans = (formatCredits: (value: number) => string) => [
     {
         name: "新人探索版",
         tag: "FREE TRIAL",
         price: "¥0",
         unit: "/ 注册立领",
-        note: "包含 100 赠送初始积分（体验平台已上架模型）",
+        note: `体验余额示例 ${formatCredits(100)}（实际赠送以账户到账为准）`,
         features: [
             "体验 480p / 720p 标清视频生成",
             "单任务队列并发数：1",
@@ -47,7 +48,7 @@ const PLANS = [
             "无限画布基础编排（/canvas）",
         ],
         missing: ["1080P 超清输出", "高优先级渲染队列"],
-        cta: "立即注册领 100 积分",
+        cta: "立即注册领取体验余额",
         to: "/register",
         highlight: false,
     },
@@ -55,8 +56,8 @@ const PLANS = [
         name: "创作者专业版",
         tag: "POPULAR",
         price: "¥99",
-        unit: "/ 10,000 算力积分",
-        note: "折合 ¥0.0099/积分 · 积分长期有效",
+        unit: `/ ${formatCredits(10000)} 余额`,
+        note: "充值余额长期有效 · 以账户中心实际套餐为准",
         features: [
             "支持 720P / 1080P 超清输出",
             "无限画布完整编排与自动保存",
@@ -72,8 +73,8 @@ const PLANS = [
         name: "工作室旗舰版",
         tag: "STUDIO FLEET",
         price: "¥299",
-        unit: "/ 35,000 算力积分",
-        note: "加赠 5,000 额外峰值点数 · 团队专用",
+        unit: `/ ${formatCredits(35000)} 余额`,
+        note: `包含 ${formatCredits(5000)} 赠送余额示例 · 团队专用`,
         features: [
             "最高优先级渲染队列",
             "1080P / 高清电影级输出",
@@ -97,6 +98,8 @@ const HOME_NAV_IDS = ["features", "canvas", "workspace", "models", "pricing"] as
 type HomeNavId = (typeof HOME_NAV_IDS)[number];
 
 export default function HomePage() {
+    const { formatCredits } = useCurrency();
+    const plans = marketingPlans(formatCredits);
     const [activeNav, setActiveNav] = useState<HomeNavId>("features");
     const user = useAuthStore((state) => state.user);
     const loadMe = useAuthStore((state) => state.loadMe);
@@ -178,7 +181,7 @@ export default function HomePage() {
                             <>
                                 <Link to="/login" className="px-3 py-1.5 text-sm text-[#c7c4d7] transition hover:text-[#e5e1e4]">登录</Link>
                                 <Link to="/register" className="ac-grad-btn px-4 py-2 text-sm">
-                                    <Zap className="size-4" /> 免费试用 (送100积分)
+                                    <Zap className="size-4" /> 免费试用 (领取体验余额)
                                 </Link>
                             </>
                         )}
@@ -211,7 +214,7 @@ export default function HomePage() {
                         <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
                             <Link to={authed ? "/video" : "/register"} className="ac-grad-btn px-8 py-3.5 text-lg">
                                 <Rocket className="size-5" />
-                                {authed ? "进入工作台" : "免费开始创作 (送 100 积分)"}
+                                {authed ? "进入工作台" : "免费开始创作 (领取体验余额)"}
                             </Link>
                             <a href="#workspace" className="ac-ghost-btn px-7 py-3.5 text-lg">
                                 <PlayCircle className="size-5 text-[#4cd7f6]" />
@@ -311,7 +314,7 @@ export default function HomePage() {
                                                 ["生成模型", "Veo 3.1 Fast", "text-[#c0c1ff]"],
                                                 ["分辨率 & 帧率", "1280×720 @ 24fps", "text-[#4cd7f6]"],
                                                 ["镜头长度", "8.0 秒（尾帧自动抽取）", "text-[#e5e1e4]"],
-                                                ["预估计费", "80 积分（失败自动原路退）", "text-[#bdc2ff]"],
+                                                ["预估计费", `${formatCredits(80)}（计费示例，失败自动原路退）`, "text-[#bdc2ff]"],
                                             ].map(([label, value, tone]) => (
                                                 <div key={label} className="flex items-center justify-between rounded border border-[#464554]/25 bg-[#0e0e10]/80 p-2">
                                                     <span className="text-[#c7c4d7]">{label}</span>
@@ -382,7 +385,7 @@ export default function HomePage() {
                             {
                                 icon: KeyRound,
                                 title: "零门槛开箱即用",
-                                desc: "告别复杂的海外 Base URL 代理与多账号 Key 管理。平台统一托管渠道与密钥，注册即送 100 初始积分，5 分钟生成首支影片。",
+                                desc: "告别复杂的海外 Base URL 代理与多账号 Key 管理。平台统一托管渠道与密钥，注册可领体验余额，具体金额以账户到账为准。",
                                 foot: "无配置负担 · 自动化网关路由",
                                 tone: "primary",
                             },
@@ -396,7 +399,7 @@ export default function HomePage() {
                             {
                                 icon: Cloud,
                                 title: "统一云端资产与透明计费",
-                                desc: "镜头切片、参数预设与画板版本云端自动保存，跨端创作无缝漫游；积分/秒透明计费，模型生成失败全额自动退款。",
+                                desc: "镜头切片、参数预设与画板版本云端自动保存，跨端创作无缝漫游；人民币费用透明展示，模型生成失败全额自动退款。",
                                 foot: "防抖自动保存 · 失败原路零损耗退回",
                                 tone: "tertiary",
                             },
@@ -522,7 +525,7 @@ export default function HomePage() {
                                 title: "《雨夜追车：霓虹都市》",
                                 desc: "低机位跟拍银色超跑穿行雨夜霓虹街道，积水倒影与体积雾营造电影级氛围。",
                                 foot: "导演: Platform Studio",
-                                credit: "80 积分",
+                                credit: `${formatCredits(80)}（示例）`,
                                 tone: "text-[#c0c1ff]",
                             },
                             {
@@ -532,7 +535,7 @@ export default function HomePage() {
                                 title: "《极速纪元：概念超跑》",
                                 desc: "以参考图锁定车身形态与光影，在画布中延展同一角色的连续镜头。",
                                 foot: "制作: 无限画布团队",
-                                credit: "80 积分",
+                                credit: `${formatCredits(80)}（示例）`,
                                 tone: "text-[#4cd7f6]",
                             },
                             {
@@ -542,7 +545,7 @@ export default function HomePage() {
                                 title: "《机械遗迹：最后巡礼》",
                                 desc: "城市霓虹与潮湿路面细节全程锚定，验证高分辨率输出的质感与稳定性。",
                                 foot: "创作者: @CanvasDirector",
-                                credit: "144 积分",
+                                credit: `${formatCredits(144)}（示例）`,
                                 tone: "text-[#bdc2ff]",
                             },
                         ].map((work) => (
@@ -569,17 +572,17 @@ export default function HomePage() {
                     <div className="mx-auto mb-16 max-w-3xl text-center">
                         <span className="ac-label uppercase tracking-widest text-[#4cd7f6]">TRANSPARENT COMPUTE TIERS</span>
                         <h2 className="ac-h2 mt-2 text-[#e5e1e4]">透明算力计费：只为成功的像素买单</h2>
-                        <p className="ac-body ac-muted mt-3">按秒精确实时计费。无复杂月度沉没成本，任务失败系统 100% 原路退还积分。</p>
+                        <p className="ac-body ac-muted mt-3">按模型规格展示人民币费用，任务失败退还冻结余额。以下套餐为展示示例，实际价格和到账金额以账户中心为准。</p>
                         <div className="ac-code mx-auto mt-6 inline-flex flex-wrap items-center justify-center gap-2 rounded-xl border border-[#464554]/40 bg-[#2a2a2c]/60 p-4 text-[#e5e1e4]">
                             <span className="font-bold text-[#4cd7f6]">费用计算法则:</span>
-                            <span>消耗积分 =</span>
-                            <span className="rounded bg-[#201f21] px-2 py-0.5 text-[#c0c1ff]">ceil(模型基准/秒 × 分辨率系数 × 音频系数 × 时长)</span>
+                            <span>预估费用（人民币） =</span>
+                            <span className="rounded bg-[#201f21] px-2 py-0.5 text-[#c0c1ff]">所选模型与规格的人民币报价</span>
                             <span className="text-[#464554]">|</span>
                             <span className="flex items-center gap-1 text-[#bdc2ff]"><ShieldCheck className="size-4" /> 渲染失败全额退还</span>
                         </div>
                     </div>
                     <div className="grid items-stretch gap-8 md:grid-cols-3">
-                        {PLANS.map((plan) => (
+                        {plans.map((plan) => (
                             <div
                                 key={plan.name}
                                 className={`ac-panel relative flex flex-col justify-between p-8 ${plan.highlight ? "border-2 border-[#c0c1ff]/60 bg-[#2a2a2c]/90 shadow-2xl shadow-[#c0c1ff]/10" : ""}`}
@@ -632,11 +635,11 @@ export default function HomePage() {
                             <span className="ac-label inline-block rounded-full border border-[#4cd7f6]/30 bg-[#353437] px-3.5 py-1.5 text-[#4cd7f6]">START YOUR NEXT MASTERPIECE</span>
                             <h2 className="ac-display text-[#e5e1e4]">即刻释放无限画布生成力量</h2>
                             <p className="ac-body-lg mx-auto max-w-xl text-[#c7c4d7]">
-                                加入全球先锋导演与生成式创作者。现在注册即送 100 积分，探索下一代计算电影学的无限边界。
+                                加入全球先锋导演与生成式创作者。现在注册领取体验余额，探索下一代计算电影学的无限边界。
                             </p>
                             <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
                                 <Link to={authed ? "/video" : "/register"} className="ac-grad-btn px-9 py-4 text-lg">
-                                    <Zap className="size-5" /> {authed ? "进入工作台" : "免费注册领 100 积分"}
+                                    <Zap className="size-5" /> {authed ? "进入工作台" : "免费注册领取体验余额"}
                                 </Link>
                                 <Link to="/login" className="ac-ghost-btn px-8 py-4 text-lg">
                                     登录现有账号 <ArrowRight className="size-5" />
@@ -669,7 +672,7 @@ export default function HomePage() {
                             },
                             {
                                 title: "开发者与规则",
-                                links: [["OpenAPI 文档", "/swagger-ui.html"], ["计费与积分细则", "#pricing"], ["管理后台", "/admin/login"], ["真实上游接入", "#models"]],
+                                links: [["OpenAPI 文档", "/swagger-ui.html"], ["人民币计费细则", "#pricing"], ["管理后台", "/admin/login"], ["真实上游接入", "#models"]],
                             },
                             {
                                 title: "合规与支持",

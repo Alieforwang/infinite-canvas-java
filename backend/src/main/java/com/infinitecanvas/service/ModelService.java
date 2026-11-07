@@ -7,9 +7,12 @@ import com.infinitecanvas.dto.AdminDtos;
 import com.infinitecanvas.dto.ModelDtos;
 import com.infinitecanvas.entity.Channel;
 import com.infinitecanvas.entity.VideoModel;
+import com.infinitecanvas.common.BizException;
 import com.infinitecanvas.mapper.ChannelMapper;
 import com.infinitecanvas.mapper.VideoModelMapper;
+import com.infinitecanvas.mapper.VideoTaskMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,11 +27,14 @@ public class ModelService {
 
     private final VideoModelMapper modelMapper;
     private final ChannelMapper channelMapper;
+    private final VideoTaskMapper taskMapper;
     private final ObjectMapper objectMapper;
 
-    public ModelService(VideoModelMapper modelMapper, ChannelMapper channelMapper, ObjectMapper objectMapper) {
+    public ModelService(VideoModelMapper modelMapper, ChannelMapper channelMapper,
+                        VideoTaskMapper taskMapper, ObjectMapper objectMapper) {
         this.modelMapper = modelMapper;
         this.channelMapper = channelMapper;
+        this.taskMapper = taskMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -39,6 +45,10 @@ public class ModelService {
     public List<ModelDtos.ModelView> listModels(String requestedCapability) {
         String capability = requestedCapability == null || requestedCapability.isBlank()
                 ? "video" : normalizeCapability(requestedCapability);
+        if (!"image".equals(capability) && !"video".equals(capability)) {
+            throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
+                    "生成接口仅支持 image 或 video");
+        }
         List<ModelDtos.ModelView> result = new ArrayList<>();
         Set<String> seenModelKeys = new HashSet<>();
         List<VideoModel> models = modelMapper.selectEnabledByCapabilitySorted(capability);
@@ -46,6 +56,7 @@ public class ModelService {
             Channel channel = channelMapper.selectById(model.getChannelId());
             String modelKey = logicalModelKey(model);
             if (channel == null || channel.getEnabled() == null || channel.getEnabled() != 1
+                    || model.getRouteWeight() != null && model.getRouteWeight() <= 0
                     || !readChannelCapabilities(channel.getCapabilities()).contains(capability)
                     || !seenModelKeys.add(modelKey.toLowerCase(Locale.ROOT))) {
                 continue;
@@ -81,32 +92,207 @@ public class ModelService {
     }
 
     public List<ModelDtos.ModelAdminView> adminList() {
+        return adminList(null);
+    }
+
+    public List<ModelDtos.ModelAdminView> adminList(String requestedCapability) {
+        String capability = requestedCapability == null || requestedCapability.isBlank()
+                ? null : normalizeCapability(requestedCapability);
         List<ModelDtos.ModelAdminView> result = new ArrayList<>();
         for (VideoModel model : modelMapper.selectAllSorted()) {
+            if (capability != null && !capability.equals(model.getCapability())) continue;
+            model.setCurrentLoad((int) Math.min(Integer.MAX_VALUE, Math.max(0, taskMapper.countActiveByModel(model.getId()))));
             Channel channel = channelMapper.selectById(model.getChannelId());
             result.add(toAdminView(model, channel));
         }
         return result;
     }
 
+    public List<ModelDtos.ClassificationSuggestion> classificationPreview() {
+        List<VideoModel> inventory = modelMapper.selectAllSorted();
+        Map<Long, String> suggested = new LinkedHashMap<>();
+        for (VideoModel model : inventory) {
+            String next = com.infinitecanvas.gateway.ModelCapabilityClassifier.classify(model.getUpstreamModel());
+            if (!"unknown".equals(next) && !next.equals(model.getCapability())) suggested.put(model.getId(), next);
+        }
+        List<ModelDtos.ClassificationSuggestion> result = new ArrayList<>();
+        for (VideoModel model : inventory) {
+            String next = suggested.get(model.getId());
+            if (next != null && compatibleClassificationPricing(model, next, inventory, suggested)) {
+                result.add(new ModelDtos.ClassificationSuggestion(model.getId(), model.getCapability(), next,
+                        model.getUpstreamModel(), logicalModelKey(model)));
+            }
+        }
+        return result;
+    }
+
+    @Transactional
+    public ModelDtos.ClassificationApplyResult classificationApply(ModelDtos.ClassificationApplyRequest request) {
+        if (request == null || request.items() == null) {
+            throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
+                    "缺少已确认的分类预览");
+        }
+        Map<Long, ModelDtos.ClassificationSuggestion> changes = new java.util.TreeMap<>();
+        for (var item : request.items()) {
+            if (item == null || item.id() == null || changes.putIfAbsent(item.id(), item) != null) throw classificationConflict();
+        }
+        if (changes.isEmpty()) return new ModelDtos.ClassificationApplyResult(0);
+        // This rare administrator operation locks inventory in ascending id order, including all target pricing groups.
+        List<VideoModel> inventory = modelMapper.selectAllForUpdate();
+        Map<Long, VideoModel> current = new LinkedHashMap<>();
+        Map<Long, String> suggested = new LinkedHashMap<>();
+        for (VideoModel model : inventory) current.put(model.getId(), model);
+        for (var item : changes.values()) {
+            VideoModel model = current.get(item.id());
+            if (model == null || !java.util.Objects.equals(model.getCapability(), item.currentCapability())
+                    || !java.util.Objects.equals(model.getUpstreamModel(), item.upstreamModel())
+                    || !java.util.Objects.equals(logicalModelKey(model), item.modelKey())) throw classificationConflict();
+            String next = com.infinitecanvas.gateway.ModelCapabilityClassifier.classify(model.getUpstreamModel());
+            if ("unknown".equals(next) || next.equals(model.getCapability()) || !next.equals(item.suggestedCapability())) {
+                throw classificationConflict();
+            }
+            suggested.put(model.getId(), next);
+        }
+        // Validate the entire batch before the first write; never silently inherit a target group's different sale prices.
+        for (var item : changes.values()) {
+            if (!compatibleClassificationPricing(current.get(item.id()), item.suggestedCapability(), inventory, suggested)) {
+                throw classificationConflict();
+            }
+        }
+        for (var item : changes.values()) {
+            if (modelMapper.updateCapabilityIfUnchanged(current.get(item.id()), item.suggestedCapability()) != 1) {
+                throw classificationConflict();
+            }
+        }
+        return new ModelDtos.ClassificationApplyResult(changes.size());
+    }
+
+    private boolean compatibleClassificationPricing(VideoModel candidate, String target, List<VideoModel> inventory,
+                                                      Map<Long, String> suggested) {
+        for (VideoModel other : inventory) {
+            if (java.util.Objects.equals(candidate.getId(), other.getId())) continue;
+            if (logicalModelKey(candidate).equalsIgnoreCase(logicalModelKey(other))
+                    && (target.equals(other.getCapability()) || target.equals(suggested.get(other.getId())))
+                    && !sameSalePricing(candidate, other)) return false;
+        }
+        return true;
+    }
+
+    private boolean sameSalePricing(VideoModel first, VideoModel second) {
+        return samePricingJson(first.getPricingRules(), second.getPricingRules())
+                && samePricingJson(first.getResolutionFactors(), second.getResolutionFactors())
+                && samePricingDecimal(first.getCreditsPerSecond(), second.getCreditsPerSecond())
+                && samePricingDecimal(first.getAudioFactor(), second.getAudioFactor())
+                && java.util.Objects.equals(first.getMinChargeCredits(), second.getMinChargeCredits());
+    }
+
+    private boolean samePricingDecimal(java.math.BigDecimal first, java.math.BigDecimal second) {
+        return first == null ? second == null : second != null && first.compareTo(second) == 0;
+    }
+
+    private boolean samePricingJson(String first, String second) {
+        if (java.util.Objects.equals(first, second)) return true;
+        if (first == null || second == null) return false;
+        try {
+            return java.util.Objects.equals(objectMapper.readTree(first), objectMapper.readTree(second));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private com.infinitecanvas.common.BizException classificationConflict() {
+        return new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
+                "模型分类、上游身份或目标逻辑组售价已冲突，请刷新预览；售价冲突请先手动统一五个售价字段", null, 409);
+    }
+
+    @Transactional
     public ModelDtos.ModelAdminView create(AdminDtos.ModelRequest request) {
         VideoModel model = new VideoModel();
         apply(model, request, true);
+        lockAndValidateRoute(model, true);
+        inheritLogicalPricing(model);
         modelMapper.insert(model);
+        modelMapper.updateLogicalPricing(model);
         return toAdminView(model, channelMapper.selectById(model.getChannelId()));
     }
 
+    @Transactional
     public ModelDtos.ModelAdminView update(Long id, AdminDtos.ModelRequest request) {
         VideoModel model = requireVideoModel(id);
+        String previousKey = logicalModelKey(model);
+        String previousCapability = model.getCapability();
+        Long previousChannel = model.getChannelId();
+        String previousUpstream = model.getUpstreamModel();
         apply(model, request, false);
+        lockAndValidateRoute(model, !java.util.Objects.equals(previousChannel, model.getChannelId())
+                || !java.util.Objects.equals(previousUpstream, model.getUpstreamModel()));
+        boolean regrouped = !logicalModelKey(model).equalsIgnoreCase(previousKey)
+                || !model.getCapability().equals(previousCapability);
+        if (regrouped) {
+            inheritLogicalPricing(model);
+        } else if (hasPricingChange(request)) {
+            VideoModel canonical = modelMapper.selectCanonicalByModelKeyForUpdate(logicalModelKey(model), model.getCapability());
+            if (canonical != null) {
+                copyPricing(canonical, model);
+                apply(model, request, false);
+            }
+        }
         modelMapper.updateById(model);
+        if (regrouped || hasPricingChange(request)) {
+            modelMapper.updateLogicalPricing(model);
+        }
+        if (!java.util.Objects.equals(previousChannel, model.getChannelId())
+                || !java.util.Objects.equals(previousUpstream, model.getUpstreamModel())
+                || !java.util.Objects.equals(previousCapability, model.getCapability())) {
+            modelMapper.updateCost(id, null, null, null);
+            model.setCostPerUnit(null);
+            model.setCostQuotaType(null);
+            model.setCostSyncedAt(null);
+        }
         return toAdminView(model, channelMapper.selectById(model.getChannelId()));
     }
 
+    private void lockAndValidateRoute(VideoModel model, boolean checkUnique) {
+        if (channelMapper.selectByIdForUpdate(model.getChannelId()) == null) {
+            throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40003,
+                    "所选渠道不存在");
+        }
+        if (!checkUnique) return;
+        VideoModel existing = modelMapper.selectByChannelAndUpstream(model.getChannelId(), model.getUpstreamModel());
+        if (existing != null && !java.util.Objects.equals(existing.getId(), model.getId())) {
+            throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
+                    "该渠道已存在相同上游模型线路");
+        }
+    }
+
+    private boolean hasPricingChange(AdminDtos.ModelRequest request) {
+        return request.pricingRules() != null || request.creditsPerSecond() != null
+                || request.resolutionFactors() != null || request.audioFactor() != null
+                || request.minChargeCredits() != null;
+    }
+
+    private void inheritLogicalPricing(VideoModel model) {
+        VideoModel canonical = modelMapper.selectCanonicalByModelKeyForUpdate(logicalModelKey(model), model.getCapability());
+        if (canonical != null && !java.util.Objects.equals(canonical.getId(), model.getId())) {
+            copyPricing(canonical, model);
+        }
+    }
+
+    static void copyPricing(VideoModel source, VideoModel target) {
+        target.setPricingRules(source.getPricingRules());
+        target.setCreditsPerSecond(source.getCreditsPerSecond());
+        target.setResolutionFactors(source.getResolutionFactors());
+        target.setAudioFactor(source.getAudioFactor());
+        target.setMinChargeCredits(source.getMinChargeCredits());
+    }
+
+    @Transactional
     public void delete(Long id) {
-        VideoModel model = requireVideoModel(id);
-        model.setEnabled(0);
-        modelMapper.updateById(model);
+        requireVideoModel(id);
+        if (taskMapper.countByModelId(id) > 0) {
+            throw new BizException("MODEL_40901", "模型已有历史任务，无法删除；请在编辑中停用该模型", null, 409);
+        }
+        modelMapper.deleteById(id);
     }
 
     public ModelDtos.ModelAdminView toAdminView(VideoModel model, Channel channel) {
@@ -118,7 +304,8 @@ public class ModelService {
                 model.getMinChargeCredits(), model.getSupportedSeconds(), model.getSupportedSizes(),
                 model.getSupportedRatios(), model.getSupportsAudio(), model.getSupportsWatermark(),
                 model.getSupportsFirstLastFrame(), model.getSupportsReferenceImages(),
-                model.getMaxReferenceImages(), model.getCreatedAt());
+                model.getMaxReferenceImages(), model.getCreatedAt(), model.getCostPerUnit(),
+                model.getCostQuotaType(), model.getCostSyncedAt(), model.getCurrentLoad());
     }
 
     private void apply(VideoModel model, AdminDtos.ModelRequest request, boolean create) {
@@ -169,45 +356,47 @@ public class ModelService {
         String capability = request.capability() == null || request.capability().isBlank()
                 ? (create ? "video" : model.getCapability()) : normalizeCapability(request.capability());
         model.setCapability(capability);
+        boolean creative = "image".equals(capability) || "video".equals(capability);
         if (request.enabled() != null) {
             model.setEnabled(request.enabled() ? 1 : 0);
         } else if (create) {
             model.setEnabled(1);
         }
+        if ("unknown".equals(capability)) model.setEnabled(0);
         model.setSort(request.sort() == null ? (create ? 0 : model.getSort()) : request.sort());
         model.setCreditsPerSecond(request.creditsPerSecond() == null
-                ? (create ? new java.math.BigDecimal("10") : model.getCreditsPerSecond()) : request.creditsPerSecond());
+                ? (create ? (creative ? new java.math.BigDecimal("10") : java.math.BigDecimal.ZERO) : model.getCreditsPerSecond()) : request.creditsPerSecond());
         model.setPricingRules(orDefaultPricingRules(request.pricingRules(), model.getPricingRules(), create, capability));
         model.setResolutionFactors(orDefaultJson(request.resolutionFactors(),
-                "image".equals(capability) ? "{}" : "{\"480p\":1.0,\"720p\":1.5,\"1080p\":2.0}",
+                "video".equals(capability) ? "{\"480p\":1.0,\"720p\":1.5,\"1080p\":2.0}" : "{}",
                 model.getResolutionFactors(), create, "分辨率系数"));
         model.setResolutionDefault(request.resolutionDefault() == null || request.resolutionDefault().isBlank()
-                ? (create ? ("image".equals(capability) ? "1024x1024" : "720p") : model.getResolutionDefault()) : request.resolutionDefault());
+                ? (create ? ("image".equals(capability) ? "1024x1024" : "video".equals(capability) ? "720p" : "") : model.getResolutionDefault()) : request.resolutionDefault());
         model.setAudioFactor(request.audioFactor() == null
                 ? (create ? java.math.BigDecimal.ONE : model.getAudioFactor()) : request.audioFactor());
         model.setMinChargeCredits(request.minChargeCredits() == null
                 ? (create ? 1L : model.getMinChargeCredits()) : request.minChargeCredits());
         model.setSupportedSeconds(orDefaultJson(request.supportedSeconds(),
-                "image".equals(capability) ? "[]" : "[\"4\",\"8\",\"12\"]",
+                "video".equals(capability) ? "[\"4\",\"8\",\"12\"]" : "[]",
                 model.getSupportedSeconds(), create, "时长枚举"));
         model.setSupportedSizes(orDefaultJson(request.supportedSizes(),
-                "image".equals(capability) ? "[\"1024x1024\"]" : "[\"1280x720\",\"720x1280\"]",
+                "image".equals(capability) ? "[\"1024x1024\"]" : "video".equals(capability) ? "[\"1280x720\",\"720x1280\"]" : "[]",
                 model.getSupportedSizes(), create, "尺寸枚举"));
         model.setSupportedRatios(request.supportedRatios() == null ? model.getSupportedRatios()
                 : validateJson(request.supportedRatios(), "宽高比枚举"));
         model.setSupportsAudio(request.supportsAudio() == null
-                ? (create ? 0 : model.getSupportsAudio()) : request.supportsAudio());
+                ? (create ? Integer.valueOf(0) : model.getSupportsAudio()) : request.supportsAudio());
         model.setSupportsWatermark(request.supportsWatermark() == null
-                ? (create ? 0 : model.getSupportsWatermark()) : request.supportsWatermark());
+                ? (create ? Integer.valueOf(0) : model.getSupportsWatermark()) : request.supportsWatermark());
         model.setSupportsFirstLastFrame(request.supportsFirstLastFrame() == null
-                ? (create ? 0 : model.getSupportsFirstLastFrame()) : request.supportsFirstLastFrame());
+                ? (create ? Integer.valueOf(0) : model.getSupportsFirstLastFrame()) : request.supportsFirstLastFrame());
         model.setSupportsReferenceImages(request.supportsReferenceImages() == null
-                ? (create ? 1 : model.getSupportsReferenceImages()) : request.supportsReferenceImages());
+                ? (create ? Integer.valueOf(creative ? 1 : 0) : model.getSupportsReferenceImages()) : request.supportsReferenceImages());
         model.setMaxReferenceImages(request.maxReferenceImages() == null
-                ? (create ? 1 : model.getMaxReferenceImages()) : request.maxReferenceImages());
+                ? (create ? Integer.valueOf(creative ? 1 : 0) : model.getMaxReferenceImages()) : request.maxReferenceImages());
 
         Channel channel = channelMapper.selectById(model.getChannelId());
-        if (channel == null || !readChannelCapabilities(channel.getCapabilities()).contains(capability)) {
+        if (channel == null || creative && !readChannelCapabilities(channel.getCapabilities()).contains(capability)) {
             throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
                     "所选渠道不支持" + ("image".equals(capability) ? "图片" : "视频") + "能力");
         }
@@ -219,9 +408,9 @@ public class ModelService {
     }
 
     private String normalizeCapability(String capability) {
-        if (!"image".equals(capability) && !"video".equals(capability)) {
+        if (!List.of("llm", "image", "video", "unknown").contains(capability)) {
             throw new com.infinitecanvas.common.BizException(com.infinitecanvas.common.ErrorCode.VALID_40001,
-                    "模型类型仅支持 image 或 video");
+                    "模型类型仅支持 llm、image、video 或 unknown");
         }
         return capability;
     }

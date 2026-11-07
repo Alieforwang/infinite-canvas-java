@@ -5,7 +5,12 @@ import { RefreshCw, Save } from "lucide-react";
 import { adminApi } from "../api/admin";
 import { PageHead } from "../components/PageHead";
 import { useFeedback } from "../lib/feedback";
+import { useCurrency } from "../lib/currency";
+import { creditsToYuan, yuanToCredits } from "../lib/format";
+import { isUnchangedYuanInput, registrationGiftUnits } from "../lib/settings-money";
 import type { SettingItem } from "../types";
+
+const REGISTRATION_GIFT_KEY = "user.register_gift_credits";
 
 interface SettingMeta {
     key: string;
@@ -19,10 +24,10 @@ interface SettingMeta {
 const SETTING_METAS: SettingMeta[] = [
     {
         key: "user.register_gift_credits",
-        label: "注册赠送积分",
+        label: "注册赠送金额（元）",
         fallback: "100",
         type: "INT",
-        description: "新用户注册成功后自动发放的积分数量。",
+        description: "新用户注册成功后自动发放的人民币余额。输入金额须符合历史记账精度。",
     },
     {
         key: "user.registration_open",
@@ -30,13 +35,6 @@ const SETTING_METAS: SettingMeta[] = [
         fallback: "true",
         type: "BOOL",
         description: "关闭后用户端不再允许新用户注册。",
-    },
-    {
-        key: "credit.exchange_per_yuan",
-        label: "每元兑换积分",
-        fallback: "100",
-        type: "INT",
-        description: "1 元人民币可兑换的积分数量。",
     },
     {
         key: "task.max_concurrency_per_user",
@@ -93,7 +91,10 @@ const SETTING_KEY_SET = new Set(SETTING_METAS.map((item) => item.key));
 
 type SettingFormValues = Record<string, string | number | boolean>;
 
-function toFormValue(item: SettingMeta, raw: string): string | number | boolean {
+function toFormValue(item: SettingMeta, raw: string, exchangePerYuan: number): string | number | boolean {
+    if (item.key === REGISTRATION_GIFT_KEY) {
+        return creditsToYuan(registrationGiftUnits(raw), exchangePerYuan) ?? 0;
+    }
     if (item.type === "BOOL") {
         return raw === "true" || raw === "1";
     }
@@ -106,6 +107,7 @@ function toFormValue(item: SettingMeta, raw: string): string | number | boolean 
 
 export function SettingsPage() {
     const { showApiError, showSuccess } = useFeedback();
+    const { ready, exchangePerYuan } = useCurrency();
     const [settings, setSettings] = useState<SettingItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -121,15 +123,26 @@ export function SettingsPage() {
         return map;
     }, [settings]);
 
+    const giftUnitsForInput = useCallback((value: unknown) => {
+        if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") {
+            throw new RangeError("请输入注册赠送金额");
+        }
+        const original = registrationGiftUnits(settingMap.get(REGISTRATION_GIFT_KEY)?.value);
+        const units = isUnchangedYuanInput(value, original, exchangePerYuan)
+            ? original : yuanToCredits(value, exchangePerYuan);
+        if (units < 0) throw new RangeError("注册赠送金额不能为负数");
+        return units;
+    }, [settingMap, exchangePerYuan]);
+
     const applyToForm = useCallback(
         (source: Map<string, SettingItem>) => {
             for (const meta of SETTING_METAS) {
                 const item = source.get(meta.key);
                 const raw = item?.value ?? meta.fallback;
-                form.setFieldValue([meta.key], toFormValue(meta, raw));
+                form.setFieldValue([meta.key], toFormValue(meta, raw, exchangePerYuan));
             }
         },
-        [form],
+        [form, exchangePerYuan],
     );
 
     const load = useCallback(async () => {
@@ -153,10 +166,11 @@ export function SettingsPage() {
     }, [applyToForm, form, showApiError]);
 
     useEffect(() => {
-        void load();
-    }, [load]);
+        if (ready) void load();
+    }, [load, ready]);
 
     const handleSave = async () => {
+        if (!ready) return;
         let values: SettingFormValues;
         try {
             values = await form.validateFields();
@@ -164,15 +178,22 @@ export function SettingsPage() {
             return;
         }
         const payload: Record<string, string> = {};
-        for (const meta of SETTING_METAS) {
-            const value = values[meta.key];
-            if (meta.type === "BOOL") {
-                payload[meta.key] = value ? "true" : "false";
-            } else if (meta.type === "INT") {
-                payload[meta.key] = String(value ?? 0);
-            } else {
-                payload[meta.key] = String(value ?? "");
+        try {
+            for (const meta of SETTING_METAS) {
+                const value = values[meta.key];
+                if (meta.key === REGISTRATION_GIFT_KEY) {
+                    payload[meta.key] = String(giftUnitsForInput(value));
+                } else if (meta.type === "BOOL") {
+                    payload[meta.key] = value ? "true" : "false";
+                } else if (meta.type === "INT") {
+                    payload[meta.key] = String(value ?? 0);
+                } else {
+                    payload[meta.key] = String(value ?? "");
+                }
             }
+        } catch (err) {
+            showApiError(err);
+            return;
         }
         setSaving(true);
         try {
@@ -196,7 +217,7 @@ export function SettingsPage() {
                         <Button icon={<RefreshCw size={15} />} onClick={() => void load()} loading={loading}>
                             重新加载
                         </Button>
-                        <Button type="primary" icon={<Save size={15} />} loading={saving} onClick={() => void handleSave()}>
+                        <Button type="primary" icon={<Save size={15} />} disabled={!ready || loading} loading={saving} onClick={() => void handleSave()}>
                             保存设置
                         </Button>
                     </Space>
@@ -207,7 +228,7 @@ export function SettingsPage() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="仅可编辑以下 10 个白名单配置项"
+                message={`仅可编辑以下 ${SETTING_METAS.length} 个白名单配置项；金额以人民币元输入`}
                 description={
                     <Space size={[4, 4]} wrap>
                         {SETTING_METAS.map((meta) => (
@@ -231,23 +252,29 @@ export function SettingsPage() {
                                         <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
                                             {meta.key}
                                         </div>
-                                        <div className="form-hint">{remote?.description || meta.description}</div>
+                                        <div className="form-hint">{meta.key === REGISTRATION_GIFT_KEY ? meta.description : remote?.description || meta.description}</div>
                                     </div>
                                 </Col>
                                 <Col xs={24} md={15}>
                                     <Form.Item
                                         name={[meta.key]}
                                         rules={
-                                            meta.type === "INT"
-                                                ? [{ required: true, message: `请输入${meta.label}` }]
-                                                : meta.type === "STRING"
-                                                  ? [{ max: 500, message: "最多 500 个字符" }]
-                                                  : []
+                                            meta.key === REGISTRATION_GIFT_KEY
+                                                ? [{ required: true, message: "请输入注册赠送金额" }, {
+                                                    validator: async (_, value: unknown) => { giftUnitsForInput(value); },
+                                                }]
+                                                : meta.type === "INT"
+                                                  ? [{ required: true, message: `请输入${meta.label}` }]
+                                                  : meta.type === "STRING"
+                                                    ? [{ max: 500, message: "最多 500 个字符" }]
+                                                    : []
                                         }
                                         style={{ marginBottom: 20 }}
                                     >
                                         {meta.type === "BOOL" ? (
                                             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                        ) : meta.key === REGISTRATION_GIFT_KEY ? (
+                                            <InputNumber<string> stringMode prefix="¥" step={String(1 / exchangePerYuan)} style={{ width: 240 }} />
                                         ) : meta.type === "INT" ? (
                                             <InputNumber min={0} step={1} style={{ width: 240 }} />
                                         ) : meta.key === "site.notice" ? (
@@ -266,7 +293,7 @@ export function SettingsPage() {
                     <Button onClick={() => void load()} disabled={saving}>
                         撤销修改
                     </Button>
-                    <Button type="primary" icon={<Save size={15} />} loading={saving} onClick={() => void handleSave()}>
+                    <Button type="primary" icon={<Save size={15} />} disabled={!ready || loading} loading={saving} onClick={() => void handleSave()}>
                         保存设置
                     </Button>
                 </div>

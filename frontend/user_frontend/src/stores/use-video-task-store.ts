@@ -4,7 +4,7 @@ import { isTaskActive } from "@/lib/video-task-state";
 import { createVideoTaskMonitor } from "@/services/video-task-monitor";
 import { useAuthStore } from "@/stores/use-auth-store";
 
-export type TaskOrigin = { projectNo?: string; projectTitle?: string; resultInserted?: boolean };
+export type TaskOrigin = { projectNo?: string; projectTitle?: string; targetNodeId?: string; resultInserted?: boolean };
 type TaskEvent = { id: string; taskNo: string };
 type TaskState = {
     userId: number | null;
@@ -50,7 +50,7 @@ function restore(userId: number): Pick<TaskState, "tasks" | "origins"> {
             }
             for (const [key, origin] of Object.entries(value.origins || {}) as [string, TaskOrigin][]) {
                 if (origin && typeof origin.projectNo === "string") {
-                    origins[key] = { projectNo: origin.projectNo, projectTitle: typeof origin.projectTitle === "string" ? origin.projectTitle : undefined, resultInserted: origin.resultInserted === true };
+                    origins[key] = { projectNo: origin.projectNo, projectTitle: typeof origin.projectTitle === "string" ? origin.projectTitle : undefined, ...(typeof origin.targetNodeId === "string" ? { targetNodeId: origin.targetNodeId } : {}), resultInserted: origin.resultInserted === true };
                 }
             }
         }

@@ -98,7 +98,7 @@ public class AdminUserService {
     @Transactional
     public void recharge(Long id, Long amount, String remark, Long adminId, String requestId) {
         if (amount == null || amount <= 0) {
-            throw new BizException(ErrorCode.VALID_40001, "充值积分必须大于 0");
+            throw new BizException(ErrorCode.VALID_40001, "充值金额必须大于 0");
         }
         requireUser(id);
         PlanOrder order = new PlanOrder();

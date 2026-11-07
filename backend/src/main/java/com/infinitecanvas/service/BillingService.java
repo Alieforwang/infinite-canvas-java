@@ -65,7 +65,8 @@ public class BillingService {
         long available = account.getAvailable() == null ? 0 : account.getAvailable();
         if (available < credits) {
             throw new BizException(ErrorCode.BILL_40201,
-                    "积分不足：本次需要 " + credits + " 积分，当前可用 " + available + " 积分",
+                    "余额不足：本次需要 " + MoneyAmounts.format(credits, settingService)
+                            + "，当前可用 " + MoneyAmounts.format(available, settingService),
                     java.util.Map.of("required", credits, "available", available), 402);
         }
         accountMapper.hold(userId, credits);
@@ -108,7 +109,7 @@ public class BillingService {
         long available = account.getAvailable() == null ? 0 : account.getAvailable();
         long next = available + amount;
         if (next < 0) {
-            throw new BizException(ErrorCode.BILL_40201, "积分不足，不能扣减到负数", java.util.Map.of("available", available));
+            throw new BizException(ErrorCode.BILL_40201, "余额不足，不能扣减到负数", java.util.Map.of("available", available));
         }
         accountMapper.recharge(userId, amount);
         insertTransaction(userId, bizType, amount, 0L, next, null, null, null, idempotencyKey,

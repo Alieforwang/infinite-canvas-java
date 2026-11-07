@@ -38,7 +38,7 @@ export default function LoginPage() {
                     </div>
                     <ul className="space-y-2 text-sm text-stone-400">
                         <li>· 平台统一配置模型，无需自备 API Key</li>
-                        <li>· 积分计费，失败自动退款</li>
+                        <li>· 人民币计费，失败自动退款</li>
                         <li>· 生成记录与素材云端保存</li>
                     </ul>
                 </div>
